@@ -8,19 +8,18 @@ from pathlib import Path
 
 from . import __version__
 from .adapters import DeployError, adapter_for
-from .config import ConfigError, load_config, render_probe_expect
+from .config import LAYOUTS, STACKS, ConfigError, load_config, render_probe_expect
 from .gates import check_learn, run_checks
-from .ports import DeployContext
+from .layouts import layout_listing
 from .loop import (
     CHECKS_PATH,
-    RELEASE_PATH,
     dump_payload,
     infer_phase,
     next_payload,
     save_state,
     update_agents_block,
 )
-from .ports import ProbeResult
+from .ports import DeployContext, ProbeResult
 from .templates import FileTemplateProvider, TemplateError
 from .util import git_commit, now_iso, write_json
 
@@ -37,22 +36,47 @@ def _sync_agents(root: Path, config) -> dict:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
+    if args.list_layouts:
+        print(layout_listing())
+        return 0
     root = _root(args.path)
     if root.exists() and any(root.iterdir()) and not args.force:
         raise ConfigError(f"{root} is not empty; use --force to add Galadon files")
     root.mkdir(parents=True, exist_ok=True)
     name = args.name or root.name
+    stack = args.stack if args.layout != "none" else "none"
     provider = FileTemplateProvider()
-    result = provider.render(root, args.template, args.role, name, force=args.force)
+    result = provider.render(
+        root,
+        args.template,
+        args.role,
+        name,
+        force=args.force,
+        layout=args.layout,
+        stack=stack,
+    )
     for directory in ("spec", "wiki", "verify", "release", ".galadon"):
         (root / directory).mkdir(parents=True, exist_ok=True)
     config = load_config(root)
     payload = _sync_agents(root, config)
     if args.json:
-        print(json.dumps({"root": str(root), **result, **payload}, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {
+                    "root": str(root),
+                    "layout": args.layout,
+                    "stack": stack,
+                    **result,
+                    **payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     else:
         print(f"Galadon initialized: {root}")
         print(f"  template: {args.template}")
+        print(f"  layout:   {args.layout} / {stack}")
         print(f"  role:     {args.role}")
         print(f"  phase:    {payload['phase']}")
         print(f"  next:     {payload['next']}")
@@ -75,7 +99,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     root = _root(args.path)
     config = load_config(root)
     phase = infer_phase(root, config)
-    report = check_learn(root) if phase == "learn" else run_checks(root, config)
+    report = check_learn(root, config) if phase == "learn" else run_checks(root, config)
     payload = _sync_agents(root, config)
     if args.json:
         print(json.dumps({**report, "next": payload}, ensure_ascii=False, indent=2))
@@ -98,7 +122,7 @@ def cmd_new(args: argparse.Namespace) -> int:
         )
     archive = root / ".galadon" / "history" / now_iso().replace(":", "-")
     archived: list[str] = []
-    for relative in (CHECKS_PATH, RELEASE_PATH):
+    for relative in (CHECKS_PATH, config.paths.release):
         source = root / relative
         if source.is_file():
             archive.mkdir(parents=True, exist_ok=True)
@@ -229,7 +253,7 @@ def cmd_ship(args: argparse.Namespace) -> int:
     }
     if rollback is not None:
         record["rollback"] = rollback
-    write_json(root / RELEASE_PATH, record)
+    write_json(root / config.paths.release, record)
     payload = _sync_agents(root, config)
     if args.json:
         print(json.dumps({"release": record, "next": payload}, ensure_ascii=False, indent=2))
@@ -294,6 +318,23 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--name", default="", help="Project name; defaults to the directory name.")
     init.add_argument("--template", choices=["web", "api", "static"], default="web")
     init.add_argument("--role", choices=["solo", "six-ring", "orchestrator"], default="solo")
+    init.add_argument(
+        "--layout",
+        choices=list(LAYOUTS),
+        default="none",
+        help="Project layering contract; the default keeps 0.2.x behaviour.",
+    )
+    init.add_argument(
+        "--stack",
+        choices=list(STACKS),
+        default="python",
+        help="Code skeleton and checks; only used together with --layout.",
+    )
+    init.add_argument(
+        "--list-layouts",
+        action="store_true",
+        help="Print the layouts and stacks this build ships, then exit.",
+    )
     init.add_argument("--force", action="store_true", help="Add files to a non-empty directory.")
     init.add_argument("--json", action="store_true")
     init.set_defaults(func=cmd_init)

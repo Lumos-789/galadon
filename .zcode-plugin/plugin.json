@@ -1,6 +1,6 @@
 {
   "name": "galadon",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "A five-stage engineering loop for agent-built projects: spec, build, verify, ship, learn. Pluggable role, template, deploy and tool ports.",
   "description_i18n": {
     "en": "A five-stage engineering loop for agent-built projects: spec, build, verify, ship, learn. Pluggable role, template, deploy and tool ports.",

@@ -6,6 +6,18 @@ from typing import Any
 
 import yaml
 
+LAYOUTS = ("none", "webapp", "service", "plugin")
+STACKS = ("python", "node", "none")
+
+# Defaults are the 0.2.x paths: a project without a `paths:` block keeps the
+# exact same artifacts and directories.
+DEFAULT_PATHS = {
+    "spec": "spec/spec.md",
+    "evidence": "verify/evidence.md",
+    "retro": "wiki/retro.md",
+    "release": "release/release.json",
+}
+
 _DEPLOY_FIELDS = {
     "adapter",
     "env",
@@ -45,12 +57,23 @@ class ChecksConfig:
 
 
 @dataclass
+class PathsConfig:
+    spec: Path = Path(DEFAULT_PATHS["spec"])
+    evidence: Path = Path(DEFAULT_PATHS["evidence"])
+    retro: Path = Path(DEFAULT_PATHS["retro"])
+    release: Path = Path(DEFAULT_PATHS["release"])
+
+
+@dataclass
 class ProjectConfig:
     name: str
     template: str
     role: str
     deploy: DeployConfig
     checks: ChecksConfig
+    layout: str = "none"
+    stack: str = "none"
+    paths: PathsConfig = field(default_factory=PathsConfig)
     tools: dict[str, str] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -110,6 +133,46 @@ def _validate_ssh_options(options: dict[str, Any], artifact: str) -> None:
         )
 
 
+def _validate_path(value: str, key: str) -> Path:
+    if not value.strip():
+        raise ConfigError(f"galadon.yaml: {key} must not be empty")
+    if "\\" in value:
+        raise ConfigError(
+            f"galadon.yaml: {key} must use forward slashes: {value}"
+        )
+    path = PurePosixPath(value.strip())
+    if path.is_absolute() or ".." in path.parts or path.parts in {(), (".",)}:
+        raise ConfigError(
+            f"galadon.yaml: {key} must be a relative path inside the project: {value}"
+        )
+    return Path(*path.parts)
+
+
+def _load_paths(raw: Any) -> PathsConfig:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ConfigError("galadon.yaml: paths must be a mapping")
+    unknown = sorted(set(str(key) for key in raw) - set(DEFAULT_PATHS))
+    if unknown:
+        raise ConfigError(
+            "galadon.yaml: paths has unknown keys: "
+            f"{', '.join(unknown)} (allowed: {', '.join(DEFAULT_PATHS)})"
+        )
+    values: dict[str, str] = {}
+    for key, default in DEFAULT_PATHS.items():
+        value = raw.get(key, default)
+        if not isinstance(value, str):
+            raise ConfigError(f"galadon.yaml: paths.{key} must be a string")
+        values[key] = value
+    return PathsConfig(
+        spec=_validate_path(values["spec"], "paths.spec"),
+        evidence=_validate_path(values["evidence"], "paths.evidence"),
+        retro=_validate_path(values["retro"], "paths.retro"),
+        release=_validate_path(values["release"], "paths.release"),
+    )
+
+
 def load_config(root: Path) -> ProjectConfig:
     path = root / "galadon.yaml"
     if not path.is_file():
@@ -130,6 +193,12 @@ def load_config(root: Path) -> ProjectConfig:
     role = str(data.get("role", "solo")).strip()
     if role not in {"solo", "six-ring", "orchestrator"}:
         raise ConfigError("galadon.yaml: role must be solo, six-ring or orchestrator")
+    layout = str(data.get("layout", "none")).strip() or "none"
+    if layout not in LAYOUTS:
+        raise ConfigError(f"galadon.yaml: layout must be {', '.join(LAYOUTS)}")
+    stack = str(data.get("stack", "none")).strip() or "none"
+    if stack not in STACKS:
+        raise ConfigError(f"galadon.yaml: stack must be {', '.join(STACKS)}")
 
     deploy_raw = data.get("deploy") or {}
     checks_raw = data.get("checks") or {}
@@ -172,6 +241,7 @@ def load_config(root: Path) -> ProjectConfig:
     tools = data.get("tools") or {}
     if not isinstance(tools, dict):
         raise ConfigError("galadon.yaml: tools must be a mapping")
+    paths = _load_paths(data.get("paths"))
 
     return ProjectConfig(
         name=name,
@@ -179,6 +249,9 @@ def load_config(root: Path) -> ProjectConfig:
         role=role,
         deploy=deploy,
         checks=checks,
+        layout=layout,
+        stack=stack,
+        paths=paths,
         tools={str(key): str(value) for key, value in tools.items()},
         raw=data,
     )

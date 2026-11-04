@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.0
+
+- `galadon init --layout {none,webapp,service,plugin}` (default `none`) and
+  `--stack {python,node,none}` (default `python`) generate the nine layers that
+  three unrelated real projects already share: entry, plan, truth, knowledge,
+  context, code, run, verify, output. `galadon init --list-layouts` prints the
+  shipped layouts and stacks.
+- `layout=none` keeps 0.2.x behaviour: the base template only, the same
+  directories, and the same artifact paths.
+- Real stack checks: `python3 -m compileall -q src` plus
+  `python3 -m unittest discover -s tests -v`, or `node --check <entry>` plus
+  `npm test` (`node --test tests/`). Every layout ships passing tests, so
+  `galadon check` is genuinely green right after `init`; `--stack none` still
+  fails loudly with "no checks configured".
+- `galadon check` enforces the layout contract for non-`none` layouts:
+  `AGENTS.md`, `openspec/config.yaml`, `spec/`, `wiki/{knowledge,progress,runbook}/`,
+  the six `.agents/` slots, non-empty checks, and `out/` + `.agents/` in
+  `.gitignore`. A missing item fails the gate and is named.
+- New `paths:` block in `galadon.yaml` (`spec`, `evidence`, `retro`, `release`)
+  read by the loop instead of hardcoded constants. Defaults are the 0.2.x
+  paths; layouts put `retro` under `wiki/progress/`.
+- Layout templates are organised as `templates/layouts/<layout>/{common,python,node}`
+  so shared files are written once per layout. `.agents/` is stored as
+  `__agents__/` because that directory is gitignored in this repository, and the
+  renderer maps it back, substituting placeholders in paths as well as content.
+
 ## 0.2.2
 
 - The `local` DeployPort now uses the same release contract as `ssh`: immutable

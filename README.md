@@ -53,15 +53,56 @@ galadon next                              # one phase, one next action
 ```
 
 Then let the agent drive: it reads `galadon.yaml`, does the current phase, and
-runs `galadon check` until the loop reaches `learn`. `init` leaves
-`checks.build` and `checks.test` empty on purpose: `check` fails loudly with
-"no checks configured — declare checks.build/checks.test" until you declare the
-real commands.
+runs `galadon check` until the loop reaches `learn`. With the default `none`
+layout, `init` leaves `checks.build` and `checks.test` empty on purpose: `check`
+fails loudly with "no checks configured — declare checks.build/checks.test"
+until you declare the real commands. A non-`none` layout ships real checks
+instead (see Layouts below).
+
+## Layouts
+
+`init --layout` adds the inside-project layering shared by the production
+projects this scaffold was sampled from. The default
+`none` keeps 0.2.x behaviour: base template only, no layout contract.
+
+| Layout | Use it for | Creates |
+|---|---|---|
+| `none` (default) | a bare Galadon loop | base template only |
+| `webapp` | a product with a backend and a frontend | `server/`, `web/`, `e2e/`, `tests/`, `scripts/`, `deploy/`, `openspec/`, `spec/`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
+| `service` | a backend service or scheduled job | `server/`, `tests/`, `scripts/`, `deploy/`, `openspec/`, `spec/`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
+| `plugin` | a distributable agent plugin | `bin/<project>`, `src/<project>/`, `skills/<project>/`, `docs/`, `tests/`, `scripts/`, `openspec/`, `spec/`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
+
+`--stack` picks the code skeleton and the real checks:
+
+| Stack | build | test |
+|---|---|---|
+| `python` (default) | `python3 -m compileall -q src` | `python3 -m unittest discover -s tests -v` |
+| `node` | `node --check <layout entry>` | `npm test` (`node --test tests/`) |
+| `none` | — | — |
+
+A non-`none` layout ships at least one real test, so `galadon check` is green
+right after `init`. It also enforces the layout contract: `AGENTS.md`,
+`openspec/config.yaml`, `spec/`, the three `wiki/` directories, the six
+`.agents/` slots, non-empty checks, and `out/` + `.agents/` in `.gitignore`. A
+missing item fails the gate and is named. `.agents/` is stored in the templates
+as `__agents__/` because `.agents/` is gitignored in this repository; the
+renderer maps it back during render.
+
+The `paths:` block in `galadon.yaml` moves the stage artifacts (`spec`,
+`evidence`, `retro`, `release`). Defaults are the 0.2.x paths; layouts put the
+retro in `wiki/progress/retro.md` because a retro is short-term progress, not
+durable knowledge.
+
+```bash
+galadon init --layout webapp --stack node --template web
+galadon init --list-layouts        # stable text: layouts and stacks
+```
 
 ## Commands
 
 ```bash
 galadon init --template web --role solo
+galadon init --layout webapp --stack python --template web
 galadon next
 galadon check
 galadon new

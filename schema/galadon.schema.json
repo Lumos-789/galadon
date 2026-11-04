@@ -14,6 +14,36 @@
     "role": {
       "enum": ["solo", "six-ring", "orchestrator"]
     },
+    "layout": {
+      "enum": ["none", "webapp", "service", "plugin"],
+      "default": "none"
+    },
+    "stack": {
+      "enum": ["python", "node", "none"],
+      "default": "none"
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spec": {
+          "type": "string",
+          "default": "spec/spec.md"
+        },
+        "evidence": {
+          "type": "string",
+          "default": "verify/evidence.md"
+        },
+        "retro": {
+          "type": "string",
+          "default": "wiki/retro.md"
+        },
+        "release": {
+          "type": "string",
+          "default": "release/release.json"
+        }
+      }
+    },
     "deploy": {
       "type": "object",
       "required": ["adapter", "env"],

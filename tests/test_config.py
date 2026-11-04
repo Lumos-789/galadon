@@ -11,7 +11,14 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from galadon.config import ConfigError, load_config, render_probe_expect  # noqa: E402
+from galadon.config import (  # noqa: E402
+    DEFAULT_PATHS,
+    LAYOUTS,
+    STACKS,
+    ConfigError,
+    load_config,
+    render_probe_expect,
+)
 
 
 BASE = {
@@ -131,6 +138,60 @@ class ConfigTests(unittest.TestCase):
         options = schema["properties"]["deploy"]["properties"]["options"]
         self.assertEqual(options["type"], "object")
         self.assertTrue(options["additionalProperties"])
+
+    def test_layout_and_paths_default_to_the_022_values(self) -> None:
+        config = load_config(self.write(BASE))
+        self.assertEqual(config.layout, "none")
+        self.assertEqual(config.stack, "none")
+        self.assertEqual(config.paths.spec, Path(DEFAULT_PATHS["spec"]))
+        self.assertEqual(config.paths.evidence, Path(DEFAULT_PATHS["evidence"]))
+        self.assertEqual(config.paths.retro, Path(DEFAULT_PATHS["retro"]))
+        self.assertEqual(config.paths.release, Path(DEFAULT_PATHS["release"]))
+
+    def test_layout_stack_and_paths_are_read(self) -> None:
+        data = json.loads(json.dumps(BASE))
+        data["layout"] = "webapp"
+        data["stack"] = "node"
+        data["paths"] = {"retro": "wiki/progress/retro.md", "spec": "docs/spec.md"}
+        config = load_config(self.write(data))
+        self.assertEqual(config.layout, "webapp")
+        self.assertEqual(config.stack, "node")
+        self.assertEqual(config.paths.retro, Path("wiki/progress/retro.md"))
+        self.assertEqual(config.paths.spec, Path("docs/spec.md"))
+        self.assertEqual(config.paths.evidence, Path("verify/evidence.md"))
+        self.assertEqual(config.paths.release, Path("release/release.json"))
+
+    def test_invalid_layout_stack_and_paths_fail_loud(self) -> None:
+        for key, value in (("layout", "hub"), ("stack", "rust")):
+            data = json.loads(json.dumps(BASE))
+            data[key] = value
+            with self.subTest(key=key):
+                with self.assertRaises(ConfigError) as caught:
+                    load_config(self.write(data))
+                self.assertIn(key, str(caught.exception))
+        for paths in (
+            {"unknown": "x"},
+            {"spec": "../escape.md"},
+            {"spec": "/absolute/spec.md"},
+            {"spec": ""},
+        ):
+            data = json.loads(json.dumps(BASE))
+            data["paths"] = paths
+            with self.subTest(paths=paths):
+                with self.assertRaises(ConfigError):
+                    load_config(self.write(data))
+
+    def test_schema_declares_layout_paths_and_stack(self) -> None:
+        schema = json.loads((ROOT / "schema" / "galadon.schema.json").read_text(encoding="utf-8"))
+        properties = schema["properties"]
+        self.assertEqual(properties["layout"]["enum"], list(LAYOUTS))
+        self.assertEqual(properties["layout"]["default"], "none")
+        self.assertEqual(properties["stack"]["enum"], list(STACKS))
+        self.assertEqual(properties["stack"]["default"], "none")
+        self.assertEqual(set(properties["paths"]["properties"]), set(DEFAULT_PATHS))
+        self.assertFalse(properties["paths"]["additionalProperties"])
+        for key, default in DEFAULT_PATHS.items():
+            self.assertEqual(properties["paths"]["properties"][key]["default"], default)
 
 
 if __name__ == "__main__":

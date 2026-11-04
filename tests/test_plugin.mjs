@@ -134,14 +134,14 @@ test("release version and changelog are bumped together", () => {
   const packageJson = JSON.parse(
     readFileSync(new URL("../package.json", import.meta.url), "utf8"),
   );
-  assert.equal(packageJson.version, "0.2.2");
+  assert.equal(packageJson.version, "0.3.0");
 
   const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
-  assert.match(changelog, /^## 0\.2\.2$/m);
+  assert.match(changelog, /^## 0\.3\.0$/m);
 
   const pyproject = readFileSync(new URL("../pyproject.toml", import.meta.url), "utf8");
-  assert.match(pyproject, /^version = "0\.2\.2"$/m);
+  assert.match(pyproject, /^version = "0\.3\.0"$/m);
 
   const pythonPackage = readFileSync(new URL("../src/galadon/__init__.py", import.meta.url), "utf8");
-  assert.match(pythonPackage, /^__version__ = "0\.2\.2"$/m);
+  assert.match(pythonPackage, /^__version__ = "0\.3\.0"$/m);
 });

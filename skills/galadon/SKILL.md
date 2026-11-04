@@ -43,6 +43,8 @@ The CLI only needs Python 3.10+ and `PyYAML`.
 
 ```bash
 galadon init --template web --role solo
+galadon init --layout webapp --stack python --template web --role solo
+galadon init --list-layouts
 galadon next
 galadon check
 galadon new
@@ -59,6 +61,26 @@ system user, release tree, systemd unit, reverse-proxy block) and is
 idempotent; `teardown --yes` removes exactly that. Both adapters keep release
 directories, `current`/`previous` links and `shared/deploy.lock`; for `local`
 the root is `deploy.options.root` (default `.galadon/deploy`).
+
+## Layouts
+
+`--layout` adds the inside-project layering shared by the real projects this
+scaffold was sampled from. `--stack` picks the code skeleton and the real
+checks. Defaults stay `layout=none`, `stack=python`; `none` keeps 0.2.x
+behaviour.
+
+| Layout | For | Key paths |
+|---|---|---|
+| `none` | a bare loop | base template only |
+| `webapp` | backend + frontend product | `server/`, `web/`, `e2e/`, `tests/`, `spec/`, `wiki/`, `.agents/` |
+| `service` | backend or scheduled job | `server/`, `tests/`, `spec/`, `wiki/`, `.agents/` |
+| `plugin` | distributable agent plugin | `bin/`, `src/`, `skills/`, `docs/`, `tests/`, `spec/`, `wiki/`, `.agents/` |
+
+Every non-`none` layout gets real checks and a passing test, and `galadon check`
+enforces the layout contract (`AGENTS.md`, `openspec/config.yaml`, `spec/`, the
+three `wiki/` directories, the six `.agents/` slots, non-empty checks, and
+`out/` + `.agents/` in `.gitignore`). When the gate fails, report the named
+missing items instead of creating empty stubs.
 
 ## Rules
 

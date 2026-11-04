@@ -50,14 +50,51 @@ galadon next                              # 当前阶段 + 一个下一步
 ```
 
 之后交给 agent：它读 `galadon.yaml`，只做当前阶段，跑 `galadon check`，
-直到循环走到 `learn`。`init` 故意把 `checks.build` 与 `checks.test` 留空：
-在声明真实命令之前，`check` 会响亮失败并提示
-"no checks configured — declare checks.build/checks.test"。
+直到循环走到 `learn`。默认 `none` 版式下，`init` 故意把 `checks.build` 与
+`checks.test` 留空：在声明真实命令之前，`check` 会响亮失败并提示
+"no checks configured — declare checks.build/checks.test"；非 `none` 版式则直接
+带上真实检查命令（见下文）。
+
+## 版式（Layouts）
+
+`init --layout` 补的是「一个工程内部怎么分层」：这套层从一个真实生产项目样本
+里抽出，默认 `none` 保持 0.2.x 行为：只生成基础模板，不做版式契约校验。
+
+| 版式 | 适用 | 生成 |
+|---|---|---|
+| `none`（默认） | 只要五阶段循环 | 基础模板 |
+| `webapp` | 前后端一体的产品 | `server/`、`web/`、`e2e/`、`tests/`、`scripts/`、`deploy/`、`openspec/`、`spec/`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
+| `service` | 纯后端或定时任务 | `server/`、`tests/`、`scripts/`、`deploy/`、`openspec/`、`spec/`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
+| `plugin` | 可分发 agent 插件 | `bin/<project>`、`src/<project>/`、`skills/<project>/`、`docs/`、`tests/`、`scripts/`、`openspec/`、`spec/`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
+
+`--stack` 决定代码骨架与真实检查命令：
+
+| 栈 | build | test |
+|---|---|---|
+| `python`（默认） | `python3 -m compileall -q src` | `python3 -m unittest discover -s tests -v` |
+| `node` | `node --check <版式入口>` | `npm test`（`node --test tests/`） |
+| `none` | — | — |
+
+非 `none` 版式自带至少一个真跑的测试，`init` 完 `galadon check` 就是绿的；
+同时校验目录契约：`AGENTS.md`、`openspec/config.yaml`、`spec/`、`wiki/` 三个目录、
+`.agents/` 六个槽位、非空 checks、`.gitignore` 里的 `out/` 与 `.agents/`——
+缺项直接失败并点名。模板里 `.agents/` 存成 `__agents__/`（本仓库 gitignore 了
+`.agents/`），渲染时映射回来。
+
+`galadon.yaml` 的 `paths:` 迁移阶段产物（`spec`、`evidence`、`retro`、`release`）。
+缺省值与 0.2.x 完全一致；版式把 retro 放到 `wiki/progress/retro.md`，因为 retro
+属于短期进度，不属于长期知识层。
+
+```bash
+galadon init --layout webapp --stack node --template web
+galadon init --list-layouts        # 稳定输出：版式与栈
+```
 
 ## 命令
 
 ```bash
 galadon init --template web --role solo
+galadon init --layout webapp --stack python --template web
 galadon next
 galadon check
 galadon new
