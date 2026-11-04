@@ -35,8 +35,9 @@ wiki/                   knowledge / progress / runbook
 scripts/dev.sh          run the CLI from a checkout
 ```
 
-`galadon.yaml` already declares real checks, so `galadon check` is green on a
-fresh clone.
+With the `python` or `node` stack, `galadon.yaml` already declares real checks,
+so `galadon check` is green on a fresh clone; `--stack none` ships no checks and
+fails the gate.
 
 ## Commands
 

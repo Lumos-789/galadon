@@ -4,20 +4,11 @@ from .ports import Phase
 
 
 class SoloPolicy:
-    name = "solo"
-
     def assign(self, phase: Phase, task: str) -> list[str]:
         return ["agent"]
 
-    def handoff(self, from_role: str, to_role: str) -> str:
-        return f"{from_role} -> {to_role}"
-
-    def reject(self, phase: Phase, reason: str) -> Phase:
-        return phase
-
 
 class SixRingPolicy:
-    name = "six-ring"
     _mapping = {
         "spec": ["spec"],
         "build": ["dev"],
@@ -30,17 +21,8 @@ class SixRingPolicy:
     def assign(self, phase: Phase, task: str) -> list[str]:
         return list(self._mapping.get(phase, ["agent"]))
 
-    def handoff(self, from_role: str, to_role: str) -> str:
-        return f"{from_role} -> {to_role}"
-
-    def reject(self, phase: Phase, reason: str) -> Phase:
-        if phase in {"verify", "ship"}:
-            return "build"
-        return "spec"
-
 
 class OrchestratorPolicy:
-    name = "orchestrator"
     _mapping = {
         "spec": ["orchestrator", "spec"],
         "build": ["orchestrator", "worker"],
@@ -52,12 +34,6 @@ class OrchestratorPolicy:
 
     def assign(self, phase: Phase, task: str) -> list[str]:
         return list(self._mapping.get(phase, ["orchestrator"]))
-
-    def handoff(self, from_role: str, to_role: str) -> str:
-        return f"{from_role} -> {to_role}"
-
-    def reject(self, phase: Phase, reason: str) -> Phase:
-        return "build" if phase in {"verify", "ship"} else "spec"
 
 
 _POLICIES = {

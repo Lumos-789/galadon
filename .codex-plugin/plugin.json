@@ -1,7 +1,7 @@
 {
   "name": "galadon",
   "version": "0.3.0",
-  "description": "A five-stage engineering loop for agent-built projects: spec, build, verify, ship, learn. Pluggable role, template, deploy and tool ports.",
+  "description": "A five-stage engineering loop for agent-built projects: spec, build, verify, ship, learn, with a layout/stack scaffold generator. Pluggable role, template and deploy ports.",
   "author": {
     "name": "Lumos-789",
     "url": "https://github.com/Lumos-789"
@@ -21,8 +21,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Galadon",
-    "shortDescription": "A five-stage engineering loop for agent-built projects",
-    "longDescription": "Galadon initializes an agent-ready engineering workspace with one stable loop: spec, build, verify, ship, learn. Role policy, project templates, deployment adapters and tools are pluggable ports; the bundled local implementation is a reference, not the framework.",
+    "shortDescription": "A five-stage engineering loop for agent-built projects, with a layout/stack scaffold generator",
+    "longDescription": "Galadon initializes an agent-ready engineering workspace with one stable loop: spec, build, verify, ship, learn, plus a layout/stack scaffold generator for webapp, service and plugin projects. Role policy, project templates and deployment adapters are pluggable ports; the bundled implementation is a reference, not the framework.",
     "developerName": "Lumos-789",
     "category": "Developer Tools",
     "capabilities": [

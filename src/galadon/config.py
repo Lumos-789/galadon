@@ -74,8 +74,6 @@ class ProjectConfig:
     layout: str = "none"
     stack: str = "none"
     paths: PathsConfig = field(default_factory=PathsConfig)
-    tools: dict[str, str] = field(default_factory=dict)
-    raw: dict[str, Any] = field(default_factory=dict)
 
 
 def render_probe_expect(expect: str, commit: str | None) -> str:
@@ -238,9 +236,6 @@ def load_config(root: Path) -> ProjectConfig:
         test=str(checks_raw.get("test") or ""),
         timeout=int(checks_raw.get("timeout") or 300),
     )
-    tools = data.get("tools") or {}
-    if not isinstance(tools, dict):
-        raise ConfigError("galadon.yaml: tools must be a mapping")
     paths = _load_paths(data.get("paths"))
 
     return ProjectConfig(
@@ -252,6 +247,4 @@ def load_config(root: Path) -> ProjectConfig:
         layout=layout,
         stack=stack,
         paths=paths,
-        tools={str(key): str(value) for key, value in tools.items()},
-        raw=data,
     )

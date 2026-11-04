@@ -14,8 +14,11 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 # under a neutral name and the renderer maps it back.
 PATH_ALIASES = {"__agents__": ".agents", "gitignore": ".gitignore"}
 
-# One copy of the spec truth layer serves every non-none layout. It renders
-# before the layout's own common layer so a layout can override a shared file.
+# Shared by every non-none layout: the spec truth layer plus the files that are
+# byte-identical across layouts (`.agents/` slots and READMEs, the wiki /
+# openspec / scripts READMEs, `.gitignore`, `openspec/config.yaml`). It renders
+# before the layout's `common/` layer so a layout can override a file; `plugin`
+# does, with its CLI/packaging-specific versions.
 SHARED_LAYER = "_shared"
 
 # Base stubs a layout replaces with a real layer: layouts generate code under

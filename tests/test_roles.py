@@ -21,7 +21,6 @@ class RolePolicyTests(unittest.TestCase):
         self.assertEqual(policy.assign("build", ""), ["dev"])
         self.assertEqual(policy.assign("verify", ""), ["test", "check"])
         self.assertEqual(policy.assign("ship", ""), ["git"])
-        self.assertEqual(policy.reject("verify", "tests failed"), "build")
 
     def test_orchestrator_keeps_a_gatekeeper(self) -> None:
         policy = role_policy_for("orchestrator")

@@ -1,6 +1,6 @@
 ---
 name: galadon
-description: Initialize and run an agent-ready engineering workspace with the five-stage Galadon loop. Use when the user says Galadon/工程阵地/初始化工程/项目模板/一键部署/下一步做什么, or wants a new project scaffolded with spec, build, verify, ship and learn gates.
+description: Initialize and run an agent-ready engineering workspace with the five-stage Galadon loop and its layout/stack scaffold generator. Use when the user says Galadon/工程阵地/初始化工程/项目模板/一键部署/下一步做什么, or wants a new project scaffolded with spec, build, verify, ship and learn gates.
 ---
 
 # Galadon
@@ -11,8 +11,8 @@ Galadon is a five-stage engineering loop:
 Spec -> Build -> Verify -> Ship -> Learn
 ```
 
-The core depends on four ports: `RolePort`, `TemplatePort`, `DeployPort` and
-`ToolPort`. The bundled implementations are references, not the framework.
+The core depends on three ports: `RolePort`, `TemplatePort` and `DeployPort`.
+The bundled implementations are references, not the framework.
 
 ## When to use
 
@@ -23,11 +23,9 @@ The core depends on four ports: `RolePort`, `TemplatePort`, `DeployPort` and
 
 ## Workflow
 
-1. Read `galadon.yaml`.
-2. Run `galadon next`.
-3. Do only the current phase; write its artifact.
-4. Run `galadon check`.
-5. Repeat until the loop is done.
+1. Run `galadon next` and read `galadon.yaml`.
+2. Do only the current phase; write its artifact.
+3. Run `galadon check`; repeat until the loop reaches `learn`.
 
 ## Running the CLI
 
@@ -39,52 +37,25 @@ Resolve it in this order and stop at the first hit:
 
 The CLI only needs Python 3.10+ and `PyYAML`.
 
-## Commands
+## Commands, layouts and ports
 
-```bash
-galadon init --template web --role solo
-galadon init --layout webapp --stack python --template web --role solo
-galadon init --list-layouts
-galadon next
-galadon check
-galadon new
-galadon bootstrap --env test
-galadon ship --env test
-galadon ship --env prod --yes-prod
-galadon teardown --env test --yes
-```
+Do not restate the lists; ask the CLI and read the bundled `README.md` (two
+levels up from this skill):
 
-`galadon new` archives the finished loop's checks and release records under
-`.galadon/history/` and returns to `build`, so the next change starts clean.
-`bootstrap` provisions whatever the selected DeployPort needs (for `ssh`:
-system user, release tree, systemd unit, reverse-proxy block) and is
-idempotent; `teardown --yes` removes exactly that. Both adapters keep release
-directories, `current`/`previous` links and `shared/deploy.lock`; for `local`
-the root is `deploy.options.root` (default `.galadon/deploy`).
+- `galadon --help` lists every command and flag.
+- `galadon init --list-layouts` prints the shipped layouts, stacks and the
+  exact build/test commands each stack runs.
+- `README.md` covers what each layout creates, the layout contract and the
+  ports: `RolePort` picks who works, `TemplatePort` only chooses which
+  `docs/profile.md` is written (the code skeleton comes from `--layout` and
+  `--stack`), and `DeployPort` builds, ships, probes and rolls back.
 
-## Layouts
-
-`--layout` adds the inside-project layering shared by the real projects this
-scaffold was sampled from. `--stack` picks the code skeleton and the real
-checks. Defaults stay `layout=none`, `stack=python`; `none` keeps 0.2.x
-behaviour.
-
-| Layout | For | Key paths |
-|---|---|---|
-| `none` | a bare loop | base template only |
-| `webapp` | backend + frontend product | `server/`, `web/`, `e2e/`, `tests/`, `spec/`, `wiki/`, `.agents/` |
-| `service` | backend or scheduled job | `server/`, `tests/`, `spec/`, `wiki/`, `.agents/` |
-| `plugin` | distributable agent plugin | `bin/`, `src/`, `skills/`, `docs/`, `tests/`, `spec/`, `wiki/`, `.agents/` |
-
-Every non-`none` layout gets real checks and a passing test. It also ships the
-`spec/` truth layer once from `templates/layouts/_shared/`: `INDEX.md`,
-`domains/`, `TESTING.md` and `CONSTITUTION.md`, rendered before the layout's
-`common/` layer so a layout can override it. `galadon check` enforces the layout
-contract (`AGENTS.md`, `openspec/config.yaml`, `spec/INDEX.md`, `spec/domains/`,
-`spec/TESTING.md`, `spec/CONSTITUTION.md`, the three `wiki/` directories, the
-six `.agents/` slots, non-empty checks, and `out/` + `.agents/` in
-`.gitignore`). When the gate fails, report the named missing items instead of
-creating empty stubs.
+Defaults stay `layout=none`, `stack=python`; `--layout none` ignores the stack
+and keeps the 0.2.x shape. A non-`none` layout with `--stack python|node` ships
+real checks and a passing test, so `galadon check` is green right after `init`;
+`--stack none` fails loudly with "no checks configured — declare
+checks.build/checks.test". `galadon check` also enforces the layout contract and
+names every missing item: report those instead of creating empty stubs.
 
 ## Rules
 
@@ -97,12 +68,3 @@ creating empty stubs.
 - Keep `AGENTS.md` short. The current phase lives in the managed block.
 - Every remote write prints its target first; `teardown` refuses a remote root
   that was not created by `bootstrap`.
-
-## Ports
-
-| Port | Reference implementation | Replace with |
-|---|---|---|
-| `RolePort` | `solo` | `six-ring`, `orchestrator` |
-| `TemplatePort` | `web`, `api`, `static` | team templates |
-| `DeployPort` | `local` command adapter, `ssh` systemd adapter | Kubernetes, platform deploys |
-| `ToolPort` | local file tools | GitLab, Jira, notifications |

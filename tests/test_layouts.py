@@ -30,8 +30,8 @@ SPEC_TRUTH_FILES = (
 EXPECTED_LISTING = """\
 layouts (galadon init --layout):
   none     base template only (default); no layout contract
-  webapp   server/ web/ e2e/ tests/ scripts/ deploy/ + openspec/ spec/ wiki/{knowledge,progress,runbook}/ .agents/
-  service  server/ tests/ scripts/ deploy/ + openspec/ spec/ wiki/{knowledge,progress,runbook}/ .agents/
+  webapp   server/ src/ (python) web/ e2e/ tests/ scripts/ deploy/ + openspec/ spec/ wiki/{knowledge,progress,runbook}/ .agents/
+  service  server/ src/ (python) tests/ scripts/ deploy/ + openspec/ spec/ wiki/{knowledge,progress,runbook}/ .agents/
   plugin   bin/<project> src/<project>/ skills/<project>/ docs/ tests/ scripts/ + openspec/ spec/ wiki/{knowledge,progress,runbook}/ .agents/
 
 stacks (galadon init --stack):

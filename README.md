@@ -12,10 +12,9 @@ else is a port:
 
 | Port | Purpose | Reference implementation |
 |---|---|---|
-| `RolePort` | Who does the work and how work is handed off | `solo` |
-| `TemplatePort` | What project skeleton to generate | `web`, `api`, `static` |
-| `DeployPort` | How to build, migrate, release, probe and roll back | `local` |
-| `ToolPort` | Issue tracking, CI, notifications, secrets, observation | local files |
+| `RolePort` | Who does the work | `solo` |
+| `TemplatePort` | Which `docs/profile.md` to write; the code skeleton comes from `--layout`/`--stack` | `web`, `api`, `static` |
+| `DeployPort` | How to build, migrate, release, probe and roll back | `local`, `ssh` |
 
 The bundled implementations are examples. A project can replace any port
 without changing the five-stage loop.
@@ -68,16 +67,24 @@ projects this scaffold was sampled from. The default
 | Layout | Use it for | Creates |
 |---|---|---|
 | `none` (default) | a bare Galadon loop | base template only |
-| `webapp` | a product with a backend and a frontend | `server/`, `web/`, `e2e/`, `tests/`, `scripts/`, `deploy/`, `openspec/`, `spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
-| `service` | a backend service or scheduled job | `server/`, `tests/`, `scripts/`, `deploy/`, `openspec/`, `spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
+| `webapp` | a product with a backend and a frontend | `server/`, `src/` (python stack), `web/`, `e2e/`, `tests/`, `scripts/`, `deploy/`, `openspec/`, `spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
+| `service` | a backend service or scheduled job | `server/`, `src/` (python stack), `tests/`, `scripts/`, `deploy/`, `openspec/`, `spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
 | `plugin` | a distributable agent plugin | `bin/<project>`, `src/<project>/`, `skills/<project>/`, `docs/`, `tests/`, `scripts/`, `openspec/`, `spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
+
+The `python` stack adds a `src/<package>/` code root; the `node` stack puts the
+entry in `server/index.js` (`webapp`, `service`) or `src/index.js` (`plugin`), so
+`webapp` and `service` have no `src/` on `node`.
 
 Every non-`none` layout also carries the spec truth layer under `spec/`:
 `INDEX.md` (the living feature index), `domains/README.md` (one behaviour
 contract per domain), `TESTING.md` (the change-to-check trigger matrix), and
 `CONSTITUTION.md` (the hard rules). These four files live once in
 `templates/layouts/_shared/` and render before the layout's own `common/`
-layer, so a layout can override a file while `none` stays unchanged.
+layer, so a layout can override a file while `none` stays unchanged. The files
+every layout shares byte for byte (the `.agents/` slots and READMEs, the
+`wiki/`, `openspec/` and `scripts/` READMEs, `.gitignore` and
+`openspec/config.yaml`) live there once too; `plugin` keeps its own versions of
+the ones that differ.
 
 `--stack` picks the code skeleton and the real checks:
 
@@ -87,8 +94,9 @@ layer, so a layout can override a file while `none` stays unchanged.
 | `node` | `node --check <layout entry>`; plugin: + `bash -n bin/<project>` | `npm test` (`node --test tests/`) |
 | `none` | — | — |
 
-A non-`none` layout ships at least one real test, so `galadon check` is green
-right after `init`. The build compiles or syntax-checks every source root the
+A non-`none` layout with `--stack python|node` ships at least one real test, so
+`galadon check` is green right after `init`; `--stack none` has no checks and
+fails loudly. The build compiles or syntax-checks every source root the
 layout ships and runs `bash -n` on the plugin's bash wrapper for both stacks, so
 a broken entry point fails the gate instead of passing it. It also enforces the
 layout contract: `AGENTS.md`, `openspec/config.yaml`, `spec/INDEX.md`,

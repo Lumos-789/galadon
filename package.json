@@ -1,7 +1,7 @@
 {
   "name": "galadon",
   "version": "0.3.0",
-  "description": "A five-stage engineering loop for agent-built projects: spec, build, verify, ship, learn. Pluggable role, template, deploy and tool ports.",
+  "description": "A five-stage engineering loop for agent-built projects: spec, build, verify, ship, learn, with a layout/stack scaffold generator. Pluggable role, template and deploy ports.",
   "type": "module",
   "main": "index.js",
   "scripts": {
@@ -34,6 +34,12 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-skill-filesystem": ">=0.1.0-rc.6 <0.3.0"
   },
   "license": "MIT",
   "repository": {

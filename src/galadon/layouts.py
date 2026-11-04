@@ -32,7 +32,7 @@ LAYOUT_SPECS: dict[str, LayoutSpec] = {
     ),
     "webapp": LayoutSpec(
         creates=(
-            "server/ web/ e2e/ tests/ scripts/ deploy/ + openspec/ spec/ "
+            "server/ src/ (python) web/ e2e/ tests/ scripts/ deploy/ + openspec/ spec/ "
             "wiki/{knowledge,progress,runbook}/ .agents/"
         ),
         node_entry="server/index.js",
@@ -40,7 +40,7 @@ LAYOUT_SPECS: dict[str, LayoutSpec] = {
     ),
     "service": LayoutSpec(
         creates=(
-            "server/ tests/ scripts/ deploy/ + openspec/ spec/ "
+            "server/ src/ (python) tests/ scripts/ deploy/ + openspec/ spec/ "
             "wiki/{knowledge,progress,runbook}/ .agents/"
         ),
         node_entry="server/index.js",

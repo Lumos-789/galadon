@@ -11,10 +11,9 @@ Galadon 初始化一个最小工程阵地，然后让 agent 每次只做当前�
 
 | 端口 | 作用 | 参考实现 |
 |---|---|---|
-| `RolePort` | 谁来做、怎么交接 | `solo` |
-| `TemplatePort` | 生成什么工程骨架 | `web`、`api`、`static` |
+| `RolePort` | 谁来做 | `solo` |
+| `TemplatePort` | 写哪份 `docs/profile.md`；代码骨架由 `--layout`/`--stack` 决定 | `web`、`api`、`static` |
 | `DeployPort` | 构建、迁移、发布、探活、回滚 | `local`、`ssh` |
-| `ToolPort` | 工单、CI、通知、密钥、观测 | 本地文件 |
 
 内置实现只是例子。项目可以替换任意端口，不需要改五阶段循环。
 
@@ -57,21 +56,27 @@ galadon next                              # 当前阶段 + 一个下一步
 
 ## 版式（Layouts）
 
-`init --layout` 补的是「一个工程内部怎么分层」：这套层从一个真实生产项目样本
-里抽出，默认 `none` 保持 0.2.x 行为：只生成基础模板，不做版式契约校验。
+`init --layout` 补的是「一个工程内部怎么分层」：这套层从三个互不相关的真实
+生产项目里抽出，默认 `none` 保持 0.2.x 行为：只生成基础模板，不做版式契约校验。
 
 | 版式 | 适用 | 生成 |
 |---|---|---|
 | `none`（默认） | 只要五阶段循环 | 基础模板 |
-| `webapp` | 前后端一体的产品 | `server/`、`web/`、`e2e/`、`tests/`、`scripts/`、`deploy/`、`openspec/`、`spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
-| `service` | 纯后端或定时任务 | `server/`、`tests/`、`scripts/`、`deploy/`、`openspec/`、`spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
+| `webapp` | 前后端一体的产品 | `server/`、`src/`（python 栈）、`web/`、`e2e/`、`tests/`、`scripts/`、`deploy/`、`openspec/`、`spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
+| `service` | 纯后端或定时任务 | `server/`、`src/`（python 栈）、`tests/`、`scripts/`、`deploy/`、`openspec/`、`spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
 | `plugin` | 可分发 agent 插件 | `bin/<project>`、`src/<project>/`、`skills/<project>/`、`docs/`、`tests/`、`scripts/`、`openspec/`、`spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
+
+`python` 栈另外生成 `src/<package>/` 代码根；`node` 栈把入口放在
+`server/index.js`（`webapp`、`service`）或 `src/index.js`（`plugin`），所以
+`webapp`、`service` 在 `node` 栈下没有 `src/`。
 
 每个非 `none` 版式还带 `spec/` 真值层：`INDEX.md`（活的功能索引）、
 `domains/README.md`（每个领域一份行为契约）、`TESTING.md`（改动到检查的触发
 矩阵）、`CONSTITUTION.md`（硬规则）。这四个文件只在
 `templates/layouts/_shared/` 存一份，先于各版式自己的 `common/` 层渲染，所以
-版式可以覆盖，而 `none` 保持不变。
+版式可以覆盖，而 `none` 保持不变。跨版式逐字节相同的文件也只在 `_shared/` 存
+一份（`.agents/` 槽位与 README、`wiki/`、`openspec/`、`scripts/` 的 README、
+`.gitignore`、`openspec/config.yaml`）；不同的那几个由 `plugin` 保留自己的版本。
 
 `--stack` 决定代码骨架与真实检查命令：
 
@@ -81,7 +86,8 @@ galadon next                              # 当前阶段 + 一个下一步
 | `node` | `node --check <版式入口>`；plugin 为 + `bash -n bin/<project>` | `npm test`（`node --test tests/`） |
 | `none` | — | — |
 
-非 `none` 版式自带至少一个真跑的测试，`init` 完 `galadon check` 就是绿的；
+非 `none` 版式配 `--stack python|node` 时自带至少一个真跑的测试，`init` 完
+`galadon check` 就是绿的；`--stack none` 没有检查命令，会响亮失败；
 build 会编译/语法校验版式交付的每个源码根目录，并对 plugin 的 bash wrapper
 用 `bash -n`（两种栈都覆盖），入口文件写坏会直接失败而不是假绿。
 同时校验目录契约：`AGENTS.md`、`openspec/config.yaml`、`spec/INDEX.md`、

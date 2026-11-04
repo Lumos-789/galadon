@@ -29,8 +29,9 @@ config.md          environment and configuration notes
 deploy/            deploy notes for the adapter in galadon.yaml
 ```
 
-`galadon.yaml` already declares real checks, so `galadon check` is green on a
-fresh clone. Secrets belong in `.env` or the secret provider you configure,
+With the `python` or `node` stack, `galadon.yaml` already declares real checks,
+so `galadon check` is green on a fresh clone; `--stack none` ships no checks and
+fails the gate. Secrets belong in `.env` or the secret provider you configure,
 never in the YAML file.
 
 ## Commands

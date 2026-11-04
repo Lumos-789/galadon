@@ -9,7 +9,6 @@ from .config import ProjectConfig
 from .roles import role_policy_for
 from .util import now_iso, read_json, write_json
 
-PHASES = ("spec", "build", "verify", "ship", "learn")
 CHECKS_PATH = Path(".galadon/checks.json")
 
 ACTIONS = {

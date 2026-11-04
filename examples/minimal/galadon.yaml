@@ -25,9 +25,3 @@ checks:
   build: "python3 -m py_compile server.py"
   test: "python3 -m unittest discover -s tests -v"
   timeout: 120
-
-tools:
-  issue: local-md
-  ci: none
-  notify: stdout
-  secret: env-file

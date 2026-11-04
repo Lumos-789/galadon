@@ -93,12 +93,6 @@
           "minimum": 1
         }
       }
-    },
-    "tools": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "string"
-      }
     }
   },
   "additionalProperties": false
