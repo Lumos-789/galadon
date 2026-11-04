@@ -125,7 +125,9 @@ Read this before pointing it at a machine you care about.
   and the proxy config), `rsync`, `flock` and `systemctl` on the target.
 - The proxy block uses a Caddy snippet named `access_log`; hosts without that
   snippet need their own `DeployPort` implementation.
-- Probes must return JSON with a `commit` field that matches the build.
+- The `ssh` adapter requires probes to return JSON with a `commit` field that
+  matches the build; the `local` adapter requires `deploy.probe_expect` and
+  looks for that text in the 200 response body.
 
 ## Design rules
 

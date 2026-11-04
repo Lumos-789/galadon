@@ -74,6 +74,12 @@ class LocalCommandAdapter:
             raise DeployError(
                 "deploy.probe_url is required; Galadon refuses to report success without a probe"
             )
+        expect = ctx.config.deploy.probe_expect.strip()
+        if not expect:
+            raise DeployError(
+                "deploy.probe_expect is required for the local adapter; "
+                "a bare HTTP 200 is not a version probe"
+            )
         try:
             with urllib.request.urlopen(url, timeout=15) as response:
                 status = response.getcode()
@@ -82,8 +88,7 @@ class LocalCommandAdapter:
             return ProbeResult(ok=False, detail=f"{type(exc).__name__}: {exc}", url=url)
         if status != 200:
             return ProbeResult(ok=False, detail=f"HTTP {status}", url=url)
-        expect = ctx.config.deploy.probe_expect.strip()
-        if expect and expect not in body:
+        if expect not in body:
             return ProbeResult(ok=False, detail=f"probe body missing expected text: {expect}", url=url)
         return ProbeResult(ok=True, detail=f"HTTP {status}", url=url)
 

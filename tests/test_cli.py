@@ -156,6 +156,28 @@ class GaladonCliTests(unittest.TestCase):
         self.assertIn("galadon.yaml is not valid YAML", err)
         self.assertNotIn("Traceback", err)
 
+    def test_local_ship_requires_probe_expect(self) -> None:
+        self.write_spec()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            data = self.config()
+            data["deploy"]["probe_url"] = "http://127.0.0.1:%s/health" % server.server_port
+            data["deploy"]["probe_expect"] = ""
+            self.set_config(data)
+
+            code, _out, _err = run("ship", "--path", str(self.project), "--env", "test")
+            self.assertEqual(code, 1)
+            release = json.loads(
+                (self.project / "release" / "release.json").read_text(encoding="utf-8")
+            )
+            self.assertFalse(release["ok"])
+            self.assertIn("probe_expect is required for the local adapter", release["probe"]["detail"])
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_new_archives_finished_loop_and_returns_to_build(self) -> None:
         self.write_spec()
         self.write_retro()

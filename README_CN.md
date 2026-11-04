@@ -116,7 +116,8 @@ bootstrap marker 的远端目录。
 - `ssh` 适配器假定目标机有 root 权限、`rsync`、`flock`、`systemctl`。
 - 反代块依赖名为 `access_log` 的 Caddy snippet；没有这个 snippet 的机器需要自己
   实现一个 `DeployPort`。
-- 探针必须返回带 `commit` 字段的 JSON，且与本次构建一致。
+- `ssh` 适配器要求探针返回带 `commit` 字段的 JSON，且与本次构建一致；`local`
+  适配器要求配置 `deploy.probe_expect`，并在 200 响应体里找这段文本。
 
 ## 设计约束
 

@@ -7,6 +7,8 @@
   artifact reports a `galadon:` error instead of a Python traceback.
 - An invalid `galadon.yaml` reports the parser message instead of a Python
   traceback.
+- The `local` DeployPort requires `deploy.probe_expect`: a bare HTTP 200 is not
+  a version probe, so it no longer counts as a successful ship.
 
 ## 0.2.0
 
