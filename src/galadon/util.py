@@ -32,6 +32,21 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def digest_path(path: Path) -> str:
+    if path.is_file():
+        return sha256_file(path)
+    digest = hashlib.sha256()
+    for child in sorted(path.rglob("*")):
+        if child.is_file():
+            digest.update(child.relative_to(path).as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            with child.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def git_commit(root: Path) -> str | None:
     try:
         proc = subprocess.run(

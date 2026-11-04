@@ -114,7 +114,10 @@ def load_config(root: Path) -> ProjectConfig:
     path = root / "galadon.yaml"
     if not path.is_file():
         raise ConfigError(f"missing {path}; run `galadon init` first")
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"galadon.yaml is not valid YAML: {exc}") from exc
     if not isinstance(data, dict):
         raise ConfigError("galadon.yaml must contain a mapping")
 

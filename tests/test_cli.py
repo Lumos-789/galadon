@@ -121,6 +121,41 @@ class GaladonCliTests(unittest.TestCase):
         code, out, _ = run("next", "--path", str(self.project), "--json")
         self.assertEqual(json.loads(out)["phase"], "done")
 
+    def test_local_ship_hashes_directory_artifact(self) -> None:
+        self.write_spec()
+        dist = self.project / "dist"
+        dist.mkdir()
+        (dist / "index.html").write_text("<h1>demo</h1>\n", encoding="utf-8")
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            data = self.config()
+            data["deploy"]["artifact"] = "dist"
+            data["deploy"]["probe_url"] = "http://127.0.0.1:%s/health" % server.server_port
+            data["deploy"]["probe_expect"] = '"ok": true'
+            self.set_config(data)
+
+            code, out, err = run("ship", "--path", str(self.project), "--env", "test", "--json")
+            self.assertEqual(code, 0, out + err)
+            release = json.loads(
+                (self.project / "release" / "release.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(release["ok"])
+            self.assertEqual(release["artifact"]["path"], "dist")
+            self.assertEqual(len(release["artifact"]["digest"]), 64)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_invalid_yaml_fails_loud_without_traceback(self) -> None:
+        (self.project / "galadon.yaml").write_text("deploy: [\n", encoding="utf-8")
+        code, _out, err = run("next", "--path", str(self.project))
+        self.assertEqual(code, 2)
+        self.assertIn("galadon.yaml is not valid YAML", err)
+        self.assertNotIn("Traceback", err)
+
     def test_new_archives_finished_loop_and_returns_to_build(self) -> None:
         self.write_spec()
         self.write_retro()

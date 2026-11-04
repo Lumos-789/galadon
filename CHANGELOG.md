@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+- The `local` DeployPort hashes an artifact directory the same way the `ssh`
+  adapter does, so `artifact: dist` works with either adapter; an unreadable
+  artifact reports a `galadon:` error instead of a Python traceback.
+- An invalid `galadon.yaml` reports the parser message instead of a Python
+  traceback.
+
 ## 0.2.0
 
 - `ssh` DeployPort: release directories, atomic `current`/`previous` switch,

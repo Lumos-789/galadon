@@ -8,7 +8,7 @@ from typing import Any
 
 from ..config import ProjectConfig
 from ..ports import Artifact, DeployContext, ProbeResult, Release
-from ..util import now_iso, run_shell, sha256_file
+from ..util import digest_path, now_iso, run_shell
 
 
 class DeployError(RuntimeError):
@@ -50,7 +50,11 @@ class LocalCommandAdapter:
                 + "\n",
                 encoding="utf-8",
             )
-        return Artifact(path=path, digest=sha256_file(path))
+        try:
+            digest = digest_path(path)
+        except OSError as exc:
+            raise DeployError(f"cannot hash artifact {path}: {exc}") from exc
+        return Artifact(path=path, digest=digest)
 
     def migrate(self, ctx: DeployContext) -> None:
         self._run(ctx.config.deploy.migrate, ctx, "migrate")

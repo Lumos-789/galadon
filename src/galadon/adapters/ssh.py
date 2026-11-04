@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shlex
@@ -13,7 +12,7 @@ from typing import Any, Callable
 
 from ..config import render_probe_expect
 from ..ports import Artifact, DeployContext, ProbeResult, Release
-from ..util import git_commit, now_iso, sha256_file
+from ..util import digest_path, git_commit, now_iso
 from .local import DeployError
 
 Runner = Callable[..., tuple[int, str, str]]
@@ -72,21 +71,6 @@ def subprocess_runner(
 
 def _q(value: Any) -> str:
     return shlex.quote(str(value))
-
-
-def _digest_path(path: Path) -> str:
-    if path.is_file():
-        return sha256_file(path)
-    digest = hashlib.sha256()
-    for child in sorted(path.rglob("*")):
-        if child.is_file():
-            digest.update(child.relative_to(path).as_posix().encode("utf-8"))
-            digest.update(b"\0")
-            with child.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            digest.update(b"\0")
-    return digest.hexdigest()
 
 
 def _parse_fields(stdout: str) -> dict[str, str]:
@@ -247,7 +231,7 @@ systemctl cat "$service" >/dev/null 2>&1 || {{ echo "galadon: systemd service is
         if not path.exists():
             raise DeployError(f"configured artifact does not exist: {path}")
         try:
-            digest = _digest_path(path)
+            digest = digest_path(path)
         except OSError as exc:
             raise DeployError(f"cannot hash artifact {path}: {exc}") from exc
         return Artifact(path=path, digest=digest)
