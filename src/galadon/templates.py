@@ -5,7 +5,7 @@ from datetime import date
 from pathlib import Path
 
 from .config import DEFAULT_PATHS, LAYOUTS, STACKS
-from .layouts import LAYOUT_RETRO, checks_for, npm_name, package_name
+from .layouts import LAYOUT_RETRO, LAYOUT_SPECS, checks_for, npm_name, package_name
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 
@@ -94,7 +94,10 @@ class FileTemplateProvider:
                 raise TemplateError(f"missing layout common template: {common}")
             layers.append((common, False))
             if effective_stack != "none":
-                stack_dir = layout_root / effective_stack
+                stack_owner = LAYOUT_SPECS[layout].stack_templates or layout
+                stack_dir = (
+                    self.plugin_root / "templates" / "layouts" / stack_owner / effective_stack
+                )
                 if not stack_dir.is_dir():
                     raise TemplateError(
                         f"missing template stack {effective_stack} for layout {layout}: {stack_dir}"

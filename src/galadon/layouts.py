@@ -21,6 +21,10 @@ class LayoutSpec:
     node_entry: str | None
     python_roots: tuple[str, ...] = ()
     shell_checks: tuple[str, ...] = ()
+    # Layout whose stack templates this one renders. `service` and `webapp`
+    # ship the same app skeleton; keeping two byte-identical copies meant a fix
+    # to one silently left the other stale, so `service` reads `webapp`'s.
+    stack_templates: str | None = None
 
 
 # The layout vocabulary was sampled from three unrelated production projects in
@@ -39,6 +43,7 @@ LAYOUT_SPECS: dict[str, LayoutSpec] = {
         python_roots=("src", "server"),
     ),
     "service": LayoutSpec(
+        stack_templates="webapp",
         creates=(
             "server/ src/ (python) tests/ scripts/ deploy/ + openspec/ spec/ "
             "wiki/{knowledge,progress,runbook}/ .agents/"
