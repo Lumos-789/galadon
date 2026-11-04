@@ -1,6 +1,6 @@
 {
   "name": "galadon",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A five-stage engineering loop for agent-built projects: spec, build, verify, ship, learn. Pluggable role, template, deploy and tool ports.",
   "type": "module",
   "main": "index.js",
@@ -15,7 +15,7 @@
   "files": [
     "bin/galadon",
     "assets/",
-    "src/galadon/",
+    "src/galadon/**/*.py",
     "skills/galadon/",
     "templates/",
     "examples/",

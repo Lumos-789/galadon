@@ -29,6 +29,7 @@ class ProbeResult:
     ok: bool
     detail: str
     url: str | None = None
+    actual: str | None = None
 
 
 @dataclass
@@ -43,6 +44,7 @@ class DeployContext:
     root: Path
     config: ProjectConfig
     env: str
+    commit: str | None = None
 
 
 class RolePort(Protocol):

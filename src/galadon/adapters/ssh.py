@@ -13,7 +13,16 @@ from typing import Any, Callable
 from ..config import render_probe_expect
 from ..ports import Artifact, DeployContext, ProbeResult, Release
 from ..util import digest_path, git_commit, now_iso
-from .local import DeployError
+from .probe import extract_commit
+from .release import (
+    ROOT_MARKER,
+    DeployError,
+    release_name,
+    release_version,
+    shell_lock,
+    shell_retain_previous,
+    shell_switch_current,
+)
 
 Runner = Callable[..., tuple[int, str, str]]
 Clock = Callable[[], datetime]
@@ -36,7 +45,6 @@ _SAFE_DOMAIN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
 _SAFE_LISTEN = re.compile(r"^[A-Za-z0-9_.:\[\]-]+$")
 _SAFE_MARKER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _SAFE_PATH = re.compile(r"^[A-Za-z0-9._/-]+$")
-ROOT_MARKER = ".galadon-root"
 
 
 def subprocess_runner(
@@ -248,9 +256,7 @@ systemctl cat "$service" >/dev/null 2>&1 || {{ echo "galadon: systemd service is
         root = self._root(ctx)
         service = self._service(ctx)
         run_user = self._run_user(ctx)
-        timestamp = self._clock().astimezone(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        release_name = f"{timestamp}-{commit}"
-        release_dir = f"{root}/releases/{release_name}"
+        release_dir = f"{root}/releases/{release_name(self._clock(), commit)}"
 
         prepare = f"""set -euo pipefail
 root={_q(root)}
@@ -282,25 +288,9 @@ root={_q(root)}
 service={_q(service)}
 run_user={_q(run_user)}
 release={_q(release_dir)}
-lock="$root/shared/deploy.lock"
-exec 9>"$lock"
-if ! flock -n 9; then
-  echo "galadon: another deployment holds $lock" >&2
-  exit 75
-fi
-test -d "$release" || {{ echo "galadon: release directory is missing: $release" >&2; exit 66; }}
+{shell_lock()}test -d "$release" || {{ echo "galadon: release directory is missing: $release" >&2; exit 66; }}
 chown -R "$run_user:$run_user" "$release"
-old=""
-if [ -L "$root/current" ]; then
-  old=$(readlink -f "$root/current")
-fi
-if [ -n "$old" ]; then
-  ln -sfn "$old" "$root/.previous.new"
-  mv -Tf "$root/.previous.new" "$root/previous"
-fi
-ln -sfn "$release" "$root/.current.new"
-mv -Tf "$root/.current.new" "$root/current"
-if ! systemctl restart "$service"; then
+{shell_retain_previous()}{shell_switch_current('"$release"', "new")}if ! systemctl restart "$service"; then
   echo "galadon: service restart failed; restoring previous current" >&2
   if [ -n "$old" ]; then
     ln -sfn "$old" "$root/.current.restore"
@@ -356,7 +346,7 @@ printf 'GALADON_OK=1\\n'
             raise DeployError(f"probe response is not JSON: {exc}") from exc
         if not isinstance(payload, dict):
             raise DeployError("probe response JSON must be an object")
-        actual = str(payload.get("commit", ""))
+        actual = extract_commit(payload)
         if actual != expected_commit:
             raise DeployError(
                 f"probe commit mismatch: expected {expected_commit}, got {actual or '(missing)'}"
@@ -371,6 +361,7 @@ printf 'GALADON_OK=1\\n'
             ok=True,
             detail=f"HTTP {status} commit {actual}",
             url=url,
+            actual=actual,
         )
 
     def probe(self, ctx: DeployContext, release: Release) -> ProbeResult:
@@ -386,22 +377,14 @@ printf 'GALADON_OK=1\\n'
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 root={_q(root)}
 service={_q(service)}
-lock="$root/shared/deploy.lock"
-exec 9>"$lock"
-if ! flock -n 9; then
-  echo "galadon: another deployment holds $lock" >&2
-  exit 75
-fi
-test -L "$root/previous" || {{ echo "galadon: no previous release link" >&2; exit 66; }}
+{shell_lock()}test -L "$root/previous" || {{ echo "galadon: no previous release link" >&2; exit 66; }}
 target=$(readlink -f "$root/previous")
 test -d "$target" || {{ echo "galadon: previous release is missing: $target" >&2; exit 66; }}
 case "$target" in
   "$root/releases/"*) ;;
   *) echo "galadon: previous link does not point into $root/releases: $target" >&2; exit 65 ;;
 esac
-ln -sfn "$target" "$root/.current.rollback"
-mv -Tf "$root/.current.rollback" "$root/current"
-systemctl restart "$service"
+{shell_switch_current('"$target"', "rollback")}systemctl restart "$service"
 printf 'GALADON_ROLLBACK_TO=%s\\n' "$target"
 printf 'GALADON_OK=1\\n'
 """
@@ -409,10 +392,7 @@ printf 'GALADON_OK=1\\n'
         target = (
             fields.get("GALADON_ROLLBACK_TO") or str(release.metadata.get("previous", ""))
         ).rstrip("/")
-        name = target.rsplit("/", 1)[-1]
-        if "-" not in name:
-            raise DeployError(f"cannot determine rolled-back commit from {target!r}")
-        version = name.rsplit("-", 1)[-1]
+        version = release_version(target)
         release.metadata["rollback"] = {
             "version": version,
             "target": target,
@@ -422,6 +402,7 @@ printf 'GALADON_OK=1\\n'
         release.metadata["rollback"].update(
             {
                 "ok": True,
+                "actual": probe.actual,
                 "probe": {
                     "ok": probe.ok,
                     "detail": probe.detail,

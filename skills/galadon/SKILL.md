@@ -56,7 +56,9 @@ galadon teardown --env test --yes
 `.galadon/history/` and returns to `build`, so the next change starts clean.
 `bootstrap` provisions whatever the selected DeployPort needs (for `ssh`:
 system user, release tree, systemd unit, reverse-proxy block) and is
-idempotent; `teardown --yes` removes exactly that.
+idempotent; `teardown --yes` removes exactly that. Both adapters keep release
+directories, `current`/`previous` links and `shared/deploy.lock`; for `local`
+the root is `deploy.options.root` (default `.galadon/deploy`).
 
 ## Rules
 

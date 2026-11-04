@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { apply, inject, name } from "../index.js";
 
 function createAgent(registrations) {
@@ -112,4 +114,34 @@ test("manifest versions stay in sync", () => {
   assert.equal(manifest.skills, "skills");
   assert.equal(manifest.version, packageJson.version);
   assert.equal(codex.version, packageJson.version);
+});
+
+test("npm tarball excludes Python bytecode", () => {
+  const repo = fileURLToPath(new URL("..", import.meta.url));
+  const stdout = execFileSync("npm", ["pack", "--dry-run", "--json"], {
+    cwd: repo,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [pack] = JSON.parse(stdout);
+  const bytecode = pack.files
+    .map((file) => file.path)
+    .filter((path) => path.endsWith(".pyc") || path.split("/").includes("__pycache__"));
+  assert.deepEqual(bytecode, []);
+});
+
+test("release version and changelog are bumped together", () => {
+  const packageJson = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  );
+  assert.equal(packageJson.version, "0.2.2");
+
+  const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+  assert.match(changelog, /^## 0\.2\.2$/m);
+
+  const pyproject = readFileSync(new URL("../pyproject.toml", import.meta.url), "utf8");
+  assert.match(pyproject, /^version = "0\.2\.2"$/m);
+
+  const pythonPackage = readFileSync(new URL("../src/galadon/__init__.py", import.meta.url), "utf8");
+  assert.match(pythonPackage, /^__version__ = "0\.2\.2"$/m);
 });

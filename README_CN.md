@@ -50,7 +50,9 @@ galadon next                              # 当前阶段 + 一个下一步
 ```
 
 之后交给 agent：它读 `galadon.yaml`，只做当前阶段，跑 `galadon check`，
-直到循环走到 `learn`。
+直到循环走到 `learn`。`init` 故意把 `checks.build` 与 `checks.test` 留空：
+在声明真实命令之前，`check` 会响亮失败并提示
+"no checks configured — declare checks.build/checks.test"。
 
 ## 命令
 
@@ -96,6 +98,11 @@ deploy:
 （改前备份、`caddy validate` 失败即恢复）。`teardown --yes` 只删除还带
 bootstrap marker 的远端目录。
 
+`deploy.adapter: local` 使用同一套发布树，根目录为 `deploy.options.root`
+（默认 `.galadon/deploy`）：`releases/<时间戳>-<版本>`、原子切换 `current`、
+保留 `previous`、独占 `shared/deploy.lock`。锁被占用时拒绝发布；探针失败时
+把 `current` 恢复到 `previous` 并重新探针，然后以非零退出并指明当前在线的版本。
+
 ## 副作用
 
 指向重要机器之前请先读这一段。
@@ -103,8 +110,9 @@ bootstrap marker 的远端目录。
 - `bootstrap` 会在远端写入：系统用户（`options.manage_user: false` 可关闭）、
   `<remote_root>/{releases,shared}`、systemd unit，以及反代配置里一个带 marker 的
   block。改反代配置前先备份，`caddy validate` 不过就恢复且不 reload。
-- `ship` 上传产物、切换 `current`、重启服务并探活；探活失败自动回滚到
-  `previous` 并以非零退出。
+- `ship` 写入不可变发布目录、原子切换 `current` 并保留 `previous`；`ssh`
+  适配器还会重启服务。随后探活；探活失败自动回滚到 `previous`、重新探针并以
+  非零退出。
 - `teardown --yes` 删除 unit、marker block、发布目录和系统用户；远端目录必须
   仍带 bootstrap 写的 marker 才会执行。
 - 所有远端写操作先打印目标；`--env prod` 还必须同一次调用带 `--yes-prod`。
@@ -117,7 +125,8 @@ bootstrap marker 的远端目录。
 - 反代块依赖名为 `access_log` 的 Caddy snippet；没有这个 snippet 的机器需要自己
   实现一个 `DeployPort`。
 - `ssh` 适配器要求探针返回带 `commit` 字段的 JSON，且与本次构建一致；`local`
-  适配器要求配置 `deploy.probe_expect`，并在 200 响应体里找这段文本。
+  适配器要求配置 `deploy.probe_expect` 并精确比较：JSON 响应体里的 `commit`
+  字段必须与之相等，非 JSON 响应体必须与之完全相等。
 
 ## 设计约束
 

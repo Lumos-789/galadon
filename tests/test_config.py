@@ -113,6 +113,13 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(ConfigError):
                     load_config(self.write(data))
 
+    def test_missing_checks_default_to_fail_loud(self) -> None:
+        data = json.loads(json.dumps(BASE))
+        del data["checks"]
+        config = load_config(self.write(data))
+        self.assertEqual(config.checks.build, "")
+        self.assertEqual(config.checks.test, "")
+
     def test_probe_commit_placeholder(self) -> None:
         self.assertEqual(render_probe_expect("{{COMMIT}}", "abc1234"), "abc1234")
         self.assertEqual(render_probe_expect("plain", None), "plain")

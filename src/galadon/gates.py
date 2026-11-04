@@ -40,27 +40,59 @@ def _write_evidence(root: Path, report: dict[str, Any]) -> None:
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
+MISSING_CHECKS = "no checks configured — declare checks.build/checks.test"
+
+
 def run_checks(root: Path, config: ProjectConfig) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     ok, detail = spec_ok(root)
     results.append({"id": "spec", "command": "", "code": 0 if ok else 1, "stdout": detail, "stderr": ""})
 
     if ok:
-        for check_id, command in (("build", config.checks.build), ("test", config.checks.test)):
-            if not command:
-                continue
-            code, stdout, stderr = run_shell(command, root, timeout=config.checks.timeout)
+        commands = (
+            ("build", config.checks.build.strip()),
+            ("test", config.checks.test.strip()),
+        )
+        if not any(command for _, command in commands):
+            ok = False
             results.append(
                 {
-                    "id": check_id,
-                    "command": command,
-                    "code": code,
-                    "stdout": _tail(stdout),
-                    "stderr": _tail(stderr),
+                    "id": "checks",
+                    "command": "",
+                    "code": 1,
+                    "stdout": MISSING_CHECKS,
+                    "stderr": "",
                 }
             )
-            if code != 0:
-                ok = False
+        else:
+            for check_id, command in commands:
+                if not command:
+                    ok = False
+                    results.append(
+                        {
+                            "id": check_id,
+                            "command": "",
+                            "code": 1,
+                            "stdout": (
+                                f"checks.{check_id} is not configured — "
+                                "declare checks.build/checks.test"
+                            ),
+                            "stderr": "",
+                        }
+                    )
+                    continue
+                code, stdout, stderr = run_shell(command, root, timeout=config.checks.timeout)
+                results.append(
+                    {
+                        "id": check_id,
+                        "command": command,
+                        "code": code,
+                        "stdout": _tail(stdout),
+                        "stderr": _tail(stderr),
+                    }
+                )
+                if code != 0:
+                    ok = False
 
     report = {
         "ok": ok,

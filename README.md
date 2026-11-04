@@ -53,7 +53,10 @@ galadon next                              # one phase, one next action
 ```
 
 Then let the agent drive: it reads `galadon.yaml`, does the current phase, and
-runs `galadon check` until the loop reaches `learn`.
+runs `galadon check` until the loop reaches `learn`. `init` leaves
+`checks.build` and `checks.test` empty on purpose: `check` fails loudly with
+"no checks configured — declare checks.build/checks.test" until you declare the
+real commands.
 
 ## Commands
 
@@ -100,6 +103,13 @@ reverse-proxy block (it backs the proxy config up and validates before
 reloading). `teardown --yes` only removes a root that still carries the
 `bootstrap` marker.
 
+`deploy.adapter: local` uses the same release tree under
+`deploy.options.root` (default `.galadon/deploy`):
+`releases/<timestamp>-<version>`, an atomic `current` switch, a retained
+`previous`, and `shared/deploy.lock`. A held lock refuses the ship; a failed
+probe restores `current` to `previous`, re-probes that release and exits
+non-zero with the live release named.
+
 ## Side effects
 
 Read this before pointing it at a machine you care about.
@@ -109,8 +119,10 @@ Read this before pointing it at a machine you care about.
   unit, and one marked block in the reverse-proxy config. The proxy config is
   backed up first and validated before any reload; a failed validation restores
   it and does not reload.
-- `ship` uploads the artifact, switches `current`, restarts the service and
-  probes it. A failed probe rolls back to `previous` and exits non-zero.
+- `ship` writes an immutable release, switches `current` atomically and keeps
+  `previous`; the `ssh` adapter also restarts the service. It then probes the
+  release. A failed probe rolls back to `previous`, re-probes it and exits
+  non-zero.
 - `teardown --yes` removes the unit, the marked proxy block, the release tree
   and the system user, but only if the root still carries the `bootstrap`
   marker.
@@ -127,7 +139,8 @@ Read this before pointing it at a machine you care about.
   snippet need their own `DeployPort` implementation.
 - The `ssh` adapter requires probes to return JSON with a `commit` field that
   matches the build; the `local` adapter requires `deploy.probe_expect` and
-  looks for that text in the 200 response body.
+  compares it exactly: a JSON body must carry a `commit` field equal to that
+  value, and a non-JSON body must equal it exactly.
 
 ## Design rules
 

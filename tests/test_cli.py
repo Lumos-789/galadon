@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import io
 import json
 import sys
@@ -26,7 +27,7 @@ def run(*argv: str) -> tuple[int, str, str]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    body = b'{"ok": true}'
+    body = b'{"ok": true, "commit": "abc1234"}'
 
     def do_GET(self) -> None:  # noqa: N802
         self.send_response(200)
@@ -45,11 +46,19 @@ class GaladonCliTests(unittest.TestCase):
         self.project = self.tmp / "demo"
         code, out, err = run("init", "--path", str(self.project), "--name", "demo")
         self.assertEqual(code, 0, out + err)
+        self.enable_checks()
 
     def tearDown(self) -> None:
         import shutil
 
+        Handler.body = b'{"ok": true, "commit": "abc1234"}'
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def enable_checks(self) -> None:
+        data = self.config()
+        data["checks"]["build"] = "true"
+        data["checks"]["test"] = "true"
+        self.set_config(data)
 
     def write_spec(self) -> None:
         (self.project / "spec" / "spec.md").write_text(
@@ -78,6 +87,24 @@ class GaladonCliTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def probe_server(self) -> ThreadingHTTPServer:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def probe_config(self, server: ThreadingHTTPServer, expect: str) -> None:
+        data = self.config()
+        data["deploy"]["probe_url"] = f"http://127.0.0.1:{server.server_port}/health.json"
+        data["deploy"]["probe_expect"] = expect
+        self.set_config(data)
+
+    def release_record(self) -> dict:
+        return json.loads(
+            (self.project / "release" / "release.json").read_text(encoding="utf-8")
+        )
+
     def test_full_loop_with_local_probe(self) -> None:
         code, out, _ = run("next", "--path", str(self.project), "--json")
         self.assertEqual(code, 0)
@@ -101,7 +128,7 @@ class GaladonCliTests(unittest.TestCase):
                 "127.0.0.1",
                 server.server_port,
             )
-            data["deploy"]["probe_expect"] = '"ok": true'
+            data["deploy"]["probe_expect"] = "abc1234"
             self.set_config(data)
 
             code, out, err = run("ship", "--path", str(self.project), "--env", "test", "--json")
@@ -109,6 +136,7 @@ class GaladonCliTests(unittest.TestCase):
             release = json.loads((self.project / "release" / "release.json").read_text(encoding="utf-8"))
             self.assertTrue(release["ok"])
             self.assertEqual(release["probe"]["ok"], True)
+            self.assertEqual(release["actual_commit"], "abc1234")
         finally:
             server.shutdown()
             server.server_close()
@@ -134,7 +162,7 @@ class GaladonCliTests(unittest.TestCase):
             data = self.config()
             data["deploy"]["artifact"] = "dist"
             data["deploy"]["probe_url"] = "http://127.0.0.1:%s/health" % server.server_port
-            data["deploy"]["probe_expect"] = '"ok": true'
+            data["deploy"]["probe_expect"] = "abc1234"
             self.set_config(data)
 
             code, out, err = run("ship", "--path", str(self.project), "--env", "test", "--json")
@@ -177,6 +205,119 @@ class GaladonCliTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_fresh_project_check_fails_until_checks_are_declared(self) -> None:
+        fresh = self.tmp / "fresh"
+        code, out, err = run("init", "--path", str(fresh), "--name", "fresh")
+        self.assertEqual(code, 0, out + err)
+        (fresh / "spec" / "spec.md").write_text(
+            "# fresh spec\n\n"
+            "## Problem\n\nA fresh project needs a real gate.\n\n"
+            "## Acceptance\n\n- [ ] the gate is real\n\n"
+            "## Non-goals\n\nNo deploy yet.\n",
+            encoding="utf-8",
+        )
+        data = yaml.safe_load((fresh / "galadon.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(data["checks"]["build"], "")
+        self.assertEqual(data["checks"]["test"], "")
+
+        code, out, err = run("check", "--path", str(fresh), "--json")
+        self.assertEqual(code, 1, out + err)
+        report = json.loads(out)
+        self.assertFalse(report["ok"])
+        messages = [item["stdout"] for item in report["results"]]
+        self.assertIn("no checks configured — declare checks.build/checks.test", messages)
+        code, out, _ = run("next", "--path", str(fresh), "--json")
+        self.assertEqual(json.loads(out)["phase"], "verify")
+
+    def test_ship_refuses_when_local_deploy_lock_is_held(self) -> None:
+        self.write_spec()
+        server = self.probe_server()
+        self.probe_config(server, "abc1234")
+        lock_path = self.project / ".galadon" / "deploy" / "shared" / "deploy.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with lock_path.open("a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                code, out, err = run("ship", "--path", str(self.project), "--env", "test")
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("another deployment holds", err)
+        releases = self.project / ".galadon" / "deploy" / "releases"
+        self.assertFalse(releases.exists() and any(releases.iterdir()))
+
+    def test_local_ship_rolls_back_to_previous_release_on_failed_probe(self) -> None:
+        from unittest import mock
+
+        self.write_spec()
+        Handler.body = b'{"ok": true, "commit": "good123"}'
+        server = self.probe_server()
+        self.probe_config(server, "{{COMMIT}}")
+
+        with mock.patch("galadon.cli.git_commit", side_effect=["good123", "bad999"]):
+            code, out, err = run("ship", "--path", str(self.project), "--env", "test", "--json")
+            self.assertEqual(code, 0, out + err)
+            current = self.project / ".galadon" / "deploy" / "current"
+            first_target = current.resolve()
+
+            self.write_retro()
+            code, out, err = run("next", "--path", str(self.project), "--json")
+            self.assertEqual(json.loads(out)["phase"], "done", out + err)
+            code, out, err = run("new", "--path", str(self.project), "--json")
+            self.assertEqual(code, 0, out + err)
+            code, out, err = run("check", "--path", str(self.project), "--json")
+            self.assertEqual(code, 0, out + err)
+
+            code, out, err = run("ship", "--path", str(self.project), "--env", "test", "--json")
+
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("release good123 is live again", err)
+        release = self.release_record()
+        self.assertFalse(release["ok"])
+        self.assertEqual(release["commit"], "bad999")
+        self.assertEqual(release["actual_commit"], "good123")
+        self.assertTrue(release["rollback"]["ok"])
+        self.assertEqual(release["rollback"]["version"], "good123")
+        self.assertEqual(current.resolve(), first_target)
+
+    def test_actual_commit_comes_from_the_probe_not_build_metadata(self) -> None:
+        from unittest import mock
+
+        self.write_spec()
+        Handler.body = b'{"ok": true, "commit": "abc1234"}'
+        server = self.probe_server()
+        self.probe_config(server, "abc1234")
+
+        with mock.patch("galadon.cli.git_commit", return_value="build999"):
+            code, out, err = run("ship", "--path", str(self.project), "--env", "test", "--json")
+
+        self.assertEqual(code, 0, out + err)
+        release = self.release_record()
+        self.assertEqual(release["commit"], "build999")
+        self.assertEqual(release["probe"]["actual"], "abc1234")
+        self.assertEqual(release["actual_commit"], "abc1234")
+
+    def test_local_probe_rejects_commit_that_only_appears_in_history(self) -> None:
+        from unittest import mock
+
+        self.write_spec()
+        Handler.body = b'{"commit":"0000000","history":["6139370"]}'
+        server = self.probe_server()
+        self.probe_config(server, "6139370")
+
+        with mock.patch("galadon.cli.git_commit", return_value="6139370"):
+            code, out, err = run("ship", "--path", str(self.project), "--env", "test", "--json")
+
+        self.assertEqual(code, 1, out + err)
+        release = self.release_record()
+        self.assertFalse(release["probe"]["ok"])
+        self.assertEqual(release["probe"]["actual"], "0000000")
+        self.assertIn("commit mismatch", release["probe"]["detail"])
+        self.assertEqual(release["actual_commit"], "0000000")
+        self.assertNotEqual(release["actual_commit"], "6139370")
 
     def test_new_archives_finished_loop_and_returns_to_build(self) -> None:
         self.write_spec()

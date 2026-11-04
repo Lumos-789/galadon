@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.2
+
+- The `local` DeployPort now uses the same release contract as `ssh`: immutable
+  `releases/<timestamp>-<version>` directories under `deploy.options.root`
+  (default `.galadon/deploy`), an atomic `current` switch, a retained
+  `previous`, and an exclusive `shared/deploy.lock`. A held lock refuses the
+  ship with a non-zero exit instead of interleaving releases.
+- A failed local probe rolls back to `previous`, re-probes the restored
+  release, and names the release that is live again.
+- The local probe is exact: a JSON response must carry a `commit` field equal
+  to `deploy.probe_expect`, and a non-JSON response must equal it exactly. The
+  recorded `actual_commit` now comes from the probe response, not build
+  metadata.
+- `galadon init` no longer scaffolds the do-nothing `checks: {build: "true",
+  test: "true"}` gate. Empty checks make `galadon check` fail loudly with
+  "no checks configured — declare checks.build/checks.test" until real commands
+  are declared.
+- `npm pack` no longer ships `__pycache__/` or `*.pyc` files from the working
+  tree.
+
 ## 0.2.1
 
 - The `local` DeployPort hashes an artifact directory the same way the `ssh`

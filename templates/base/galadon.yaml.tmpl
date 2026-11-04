@@ -5,16 +5,18 @@ role: {{ROLE}}
 deploy:
   adapter: local
   env: test
-  build: "true"
+  build: ""
   migrate: ""
-  release: "true"
+  release: ""
   probe_url: ""
   probe_expect: ""
   artifact: ""
 
 checks:
-  build: "true"
-  test: "true"
+  # Required: set the real commands. Empty values make `galadon check` fail
+  # loudly instead of passing a do-nothing gate.
+  build: ""
+  test: ""
   timeout: 300
 
 tools:

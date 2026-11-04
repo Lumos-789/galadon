@@ -1,22 +1,41 @@
 from __future__ import annotations
 
 import json
+import shutil
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from ..config import ProjectConfig
+from ..config import render_probe_expect
 from ..ports import Artifact, DeployContext, ProbeResult, Release
-from ..util import digest_path, now_iso, run_shell
+from ..util import digest_path, git_commit, now_iso, run_shell
+from .probe import extract_commit
+from .release import (
+    DeployError,
+    ReleaseLayout,
+    deploy_lock,
+    release_name,
+    release_version,
+    retain_previous,
+    switch_current,
+)
 
-
-class DeployError(RuntimeError):
-    pass
+Clock = Callable[[], datetime]
+CommitProvider = Callable[[Path], str | None]
 
 
 class LocalCommandAdapter:
     name = "local"
+
+    def __init__(
+        self,
+        clock: Clock | None = None,
+        commit_provider: CommitProvider | None = None,
+    ) -> None:
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._commit_provider = commit_provider or git_commit
 
     def describe(self, ctx: DeployContext) -> str:
         return f"local workspace {ctx.root}"
@@ -59,38 +78,169 @@ class LocalCommandAdapter:
     def migrate(self, ctx: DeployContext) -> None:
         self._run(ctx.config.deploy.migrate, ctx, "migrate")
 
+    def _layout(self, ctx: DeployContext) -> ReleaseLayout:
+        configured = str(ctx.config.deploy.options.get("root") or "").strip()
+        if configured:
+            root = Path(configured).expanduser()
+            if not root.is_absolute():
+                root = ctx.root / root
+        else:
+            root = ctx.root / ".galadon" / "deploy"
+        return ReleaseLayout(root.resolve())
+
+    def _commit(self, ctx: DeployContext) -> str:
+        return (ctx.commit or self._commit_provider(ctx.root) or "").strip()
+
     def release(self, ctx: DeployContext, artifact: Artifact) -> Release:
-        self._run(ctx.config.deploy.release, ctx, "release")
+        layout = self._layout(ctx)
+        artifact_root = artifact.path.resolve()
+        if layout.root == artifact_root or layout.root.is_relative_to(artifact_root):
+            raise DeployError(
+                f"release root {layout.root} is inside artifact {artifact_root}; "
+                "set deploy.options.root outside the artifact"
+            )
+        commit = self._commit(ctx)
+        version = commit or artifact.digest[:12]
+        target = layout.release_dir(release_name(self._clock(), version))
+        with deploy_lock(layout):
+            self._run(ctx.config.deploy.release, ctx, "release")
+            try:
+                layout.ensure()
+                if target.exists() or target.is_symlink():
+                    raise DeployError(f"release directory already exists: {target}")
+                target.mkdir(parents=True)
+                if artifact.path.is_dir():
+                    shutil.copytree(artifact.path, target, symlinks=True, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(artifact.path, target / artifact.path.name)
+                previous = retain_previous(layout)
+                switch_current(layout, target)
+            except OSError as exc:
+                shutil.rmtree(target, ignore_errors=True)
+                raise DeployError(f"cannot publish release {target}: {exc}") from exc
         return Release(
             env=ctx.env,
             artifact=artifact,
             adapter=self.name,
-            metadata={"released_at": now_iso()},
+            metadata={
+                "released_at": now_iso(),
+                "version": version,
+                "commit": commit or None,
+                "release_dir": str(target),
+                "previous": str(previous or ""),
+            },
         )
 
-    def probe(self, ctx: DeployContext, release: Release) -> ProbeResult:
+    def _probe(
+        self,
+        ctx: DeployContext,
+        expected: str,
+        *,
+        check_expect: bool,
+    ) -> ProbeResult:
         url = ctx.config.deploy.probe_url.strip()
         if not url:
             raise DeployError(
                 "deploy.probe_url is required; Galadon refuses to report success without a probe"
             )
-        expect = ctx.config.deploy.probe_expect.strip()
+        try:
+            with urllib.request.urlopen(url, timeout=15) as response:
+                status = response.getcode()
+                body = response.read(256_000).decode(errors="replace")
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            return ProbeResult(
+                ok=False,
+                detail=f"{type(exc).__name__}: {exc}",
+                url=url,
+            )
+        if status != 200:
+            return ProbeResult(ok=False, detail=f"HTTP {status}", url=url)
+        body = body.strip()
+        try:
+            payload: Any = json.loads(body)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            actual = extract_commit(payload)
+            if actual is None:
+                return ProbeResult(
+                    ok=False,
+                    detail="probe JSON is missing the commit field",
+                    url=url,
+                )
+            if actual != expected:
+                return ProbeResult(
+                    ok=False,
+                    detail=f"probe commit mismatch: expected {expected}, got {actual or '(missing)'}",
+                    url=url,
+                    actual=actual or None,
+                )
+            return ProbeResult(
+                ok=True,
+                detail=f"HTTP {status} commit {actual}",
+                url=url,
+                actual=actual,
+            )
+        if not check_expect:
+            return ProbeResult(
+                ok=True,
+                detail=f"HTTP {status} (text body; version not asserted)",
+                url=url,
+                actual=body or None,
+            )
+        if body != expected:
+            return ProbeResult(
+                ok=False,
+                detail=(
+                    "probe body does not exactly match deploy.probe_expect: "
+                    f"expected {expected!r}, got {body[:200]!r}"
+                ),
+                url=url,
+                actual=body[:200] or None,
+            )
+        return ProbeResult(ok=True, detail=f"HTTP {status}", url=url, actual=body)
+
+    def probe(self, ctx: DeployContext, release: Release) -> ProbeResult:
+        expect = render_probe_expect(
+            ctx.config.deploy.probe_expect.strip(),
+            str(release.metadata.get("commit") or "") or None,
+        )
         if not expect:
             raise DeployError(
                 "deploy.probe_expect is required for the local adapter; "
                 "a bare HTTP 200 is not a version probe"
             )
-        try:
-            with urllib.request.urlopen(url, timeout=15) as response:
-                status = response.getcode()
-                body = response.read(256_000).decode(errors="replace")
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            return ProbeResult(ok=False, detail=f"{type(exc).__name__}: {exc}", url=url)
-        if status != 200:
-            return ProbeResult(ok=False, detail=f"HTTP {status}", url=url)
-        if expect not in body:
-            return ProbeResult(ok=False, detail=f"probe body missing expected text: {expect}", url=url)
-        return ProbeResult(ok=True, detail=f"HTTP {status}", url=url)
+        return self._probe(ctx, expect, check_expect=True)
 
     def rollback(self, ctx: DeployContext, release: Release) -> None:
-        raise DeployError("local adapter has no rollback implementation")
+        layout = self._layout(ctx)
+        with deploy_lock(layout):
+            target = layout.previous_release()
+            version = release_version(target)
+            switch_current(layout, target, suffix="rollback")
+            release.metadata["rollback"] = {
+                "version": version,
+                "target": str(target),
+                "ok": False,
+            }
+        try:
+            probe = self._probe(ctx, version, check_expect=False)
+        except DeployError as exc:
+            raise DeployError(
+                f"rolled back to {version} at {target}, but the re-probe failed: {exc}"
+            ) from exc
+        release.metadata["rollback"].update(
+            {
+                "ok": probe.ok,
+                "actual": probe.actual,
+                "probe": {
+                    "ok": probe.ok,
+                    "detail": probe.detail,
+                    "url": probe.url,
+                },
+            }
+        )
+        if not probe.ok:
+            raise DeployError(
+                f"rolled back to {version} at {target}, but the re-probe failed: {probe.detail}"
+            )

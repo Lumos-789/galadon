@@ -158,6 +158,7 @@ def cmd_ship(args: argparse.Namespace) -> int:
 
     artifact = adapter.build(ctx)
     commit = git_commit(root)
+    ctx.commit = commit
     if "{{COMMIT}}" in config.deploy.probe_expect:
         config.deploy.probe_expect = render_probe_expect(config.deploy.probe_expect, commit)
 
@@ -191,10 +192,23 @@ def cmd_ship(args: argparse.Namespace) -> int:
             rollback["attempted"] = True
             rollback["ok"] = False
             rollback["error"] = str(exc)
+        if rollback.get("ok"):
+            live = rollback.get("actual") or rollback.get("version") or "(unknown)"
+            target = f" at {rollback['target']}" if rollback.get("target") else ""
+            print(
+                f"galadon: probe failed; rolled back automatically: "
+                f"release {live} is live again{target}",
+                file=sys.stderr,
+            )
+        elif rollback.get("error"):
+            print(
+                f"galadon: probe failed; rollback failed: {rollback['error']}",
+                file=sys.stderr,
+            )
 
-    actual_commit = (
-        build_commit if probe.ok else rollback.get("version") if rollback else None
-    ) or None
+    actual_commit = probe.actual
+    if rollback is not None and rollback.get("ok"):
+        actual_commit = str(rollback.get("actual") or rollback.get("version") or "") or probe.actual
     record = {
         "ok": probe.ok,
         "at": now_iso(),
@@ -210,6 +224,7 @@ def cmd_ship(args: argparse.Namespace) -> int:
             "ok": probe.ok,
             "detail": probe.detail,
             "url": probe.url,
+            "actual": probe.actual,
         },
     }
     if rollback is not None:
@@ -221,6 +236,12 @@ def cmd_ship(args: argparse.Namespace) -> int:
     else:
         print(f"Galadon ship: {'PASS' if probe.ok else 'FAIL'} ({env})")
         print(f"  probe: {probe.detail}")
+        if rollback is not None:
+            if rollback.get("ok"):
+                live = rollback.get("actual") or rollback.get("version")
+                print(f"  rollback: release {live} is live again")
+            elif rollback.get("error"):
+                print(f"  rollback: failed: {rollback['error']}")
         print(f"  next:  {payload['next']}")
     return 0 if probe.ok else 1
 

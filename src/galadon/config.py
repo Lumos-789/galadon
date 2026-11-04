@@ -39,8 +39,8 @@ class DeployConfig:
 
 @dataclass
 class ChecksConfig:
-    build: str = "true"
-    test: str = "true"
+    build: str = ""
+    test: str = ""
     timeout: int = 300
 
 
@@ -165,9 +165,9 @@ def load_config(root: Path) -> ProjectConfig:
         _validate_ssh_options(options, deploy.artifact)
 
     checks = ChecksConfig(
-        build=str(checks_raw.get("build", "true")),
-        test=str(checks_raw.get("test", "true")),
-        timeout=int(checks_raw.get("timeout", 300)),
+        build=str(checks_raw.get("build") or ""),
+        test=str(checks_raw.get("test") or ""),
+        timeout=int(checks_raw.get("timeout") or 300),
     )
     tools = data.get("tools") or {}
     if not isinstance(tools, dict):
