@@ -36,6 +36,13 @@
   rendered before each layout's `common/` layer. `.agents/` is stored as
   `__agents__/` because that directory is gitignored in this repository, and the
   renderer maps it back, substituting placeholders in paths as well as content.
+- `webapp` and `service` shipped two byte-identical copies of the app skeleton
+  (`server/app.py`, `src/<pkg>/`, `tests/`, `scripts/dev.sh`, for both stacks —
+  10 files, 206 lines). A fix to one would have left the other silently stale,
+  which is exactly the failure mode nobody notices until a user picks that
+  layout, so `service` now renders `webapp`'s stack templates through
+  `LayoutSpec.stack_templates`. Generated output is unchanged across all 36
+  profile × layout × stack combinations, verified against a pre-change baseline.
 
 ## 0.2.2
 
