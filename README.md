@@ -68,9 +68,16 @@ projects this scaffold was sampled from. The default
 | Layout | Use it for | Creates |
 |---|---|---|
 | `none` (default) | a bare Galadon loop | base template only |
-| `webapp` | a product with a backend and a frontend | `server/`, `web/`, `e2e/`, `tests/`, `scripts/`, `deploy/`, `openspec/`, `spec/`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
-| `service` | a backend service or scheduled job | `server/`, `tests/`, `scripts/`, `deploy/`, `openspec/`, `spec/`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
-| `plugin` | a distributable agent plugin | `bin/<project>`, `src/<project>/`, `skills/<project>/`, `docs/`, `tests/`, `scripts/`, `openspec/`, `spec/`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
+| `webapp` | a product with a backend and a frontend | `server/`, `web/`, `e2e/`, `tests/`, `scripts/`, `deploy/`, `openspec/`, `spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
+| `service` | a backend service or scheduled job | `server/`, `tests/`, `scripts/`, `deploy/`, `openspec/`, `spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
+| `plugin` | a distributable agent plugin | `bin/<project>`, `src/<project>/`, `skills/<project>/`, `docs/`, `tests/`, `scripts/`, `openspec/`, `spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`, `wiki/{knowledge,progress,runbook}/`, `.agents/`, `config.md` |
+
+Every non-`none` layout also carries the spec truth layer under `spec/`:
+`INDEX.md` (the living feature index), `domains/README.md` (one behaviour
+contract per domain), `TESTING.md` (the change-to-check trigger matrix), and
+`CONSTITUTION.md` (the hard rules). These four files live once in
+`templates/layouts/_shared/` and render before the layout's own `common/`
+layer, so a layout can override a file while `none` stays unchanged.
 
 `--stack` picks the code skeleton and the real checks:
 
@@ -83,12 +90,13 @@ projects this scaffold was sampled from. The default
 A non-`none` layout ships at least one real test, so `galadon check` is green
 right after `init`. The build compiles or syntax-checks every source root the
 layout ships and runs `bash -n` on the plugin's bash wrapper for both stacks, so
-a broken entry point fails the gate instead of passing it. It also enforces the layout contract: `AGENTS.md`,
-`openspec/config.yaml`, `spec/`, the three `wiki/` directories, the six
-`.agents/` slots, non-empty checks, and `out/` + `.agents/` in `.gitignore`. A
-missing item fails the gate and is named. `.agents/` is stored in the templates
-as `__agents__/` because `.agents/` is gitignored in this repository; the
-renderer maps it back during render.
+a broken entry point fails the gate instead of passing it. It also enforces the
+layout contract: `AGENTS.md`, `openspec/config.yaml`, `spec/INDEX.md`,
+`spec/domains/`, `spec/TESTING.md`, `spec/CONSTITUTION.md`, the three `wiki/`
+directories, the six `.agents/` slots, non-empty checks, and `out/` +
+`.agents/` in `.gitignore`. A missing item fails the gate and is named.
+`.agents/` is stored in the templates as `__agents__/` because `.agents/` is
+gitignored in this repository; the renderer maps it back during render.
 
 The `paths:` block in `galadon.yaml` moves the stage artifacts (`spec`,
 `evidence`, `retro`, `release`). Defaults are the 0.2.x paths; layouts put the

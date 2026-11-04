@@ -17,8 +17,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from galadon.cli import main  # noqa: E402
+from galadon.templates import FileTemplateProvider  # noqa: E402
 
 AGENT_SLOTS = ("plans", "evidence", "archive", "skills", "tmp", "wiki")
+SPEC_TRUTH_FILES = (
+    "spec/INDEX.md",
+    "spec/domains/README.md",
+    "spec/TESTING.md",
+    "spec/CONSTITUTION.md",
+)
 
 EXPECTED_LISTING = """\
 layouts (galadon init --layout):
@@ -75,6 +82,16 @@ class LayoutTestCase(unittest.TestCase):
         self.assertNotIn("Traceback", err)
         return code, json.loads(out), err
 
+    def assert_spec_truth_layer(self) -> None:
+        for relative in SPEC_TRUTH_FILES:
+            path = self.project / relative
+            self.assertTrue(path.is_file(), relative)
+            text = path.read_text(encoding="utf-8")
+            self.assertTrue(text.strip(), relative)
+            self.assertNotIn("{{", text, relative)
+            self.assertNotIn("TODO", text, relative)
+            self.assertNotIn("FIXME", text, relative)
+
     def assert_layout_contract_passes(self, report: dict) -> None:
         layout = item(report, "layout")
         self.assertEqual(layout["code"], 0, layout["stdout"])
@@ -86,6 +103,7 @@ class LayoutTestCase(unittest.TestCase):
         ignore = (self.project / ".gitignore").read_text(encoding="utf-8").splitlines()
         self.assertIn("out/", ignore)
         self.assertIn(".agents/", ignore)
+        self.assert_spec_truth_layer()
 
     def source_files(self, *roots: str) -> list[str]:
         files: list[str] = []
@@ -394,14 +412,138 @@ class NoneLayoutTests(LayoutTestCase):
         data = yaml.safe_load((other / "galadon.yaml").read_text(encoding="utf-8"))
         self.assertEqual(data["stack"], "none")
 
+    def test_layout_none_ships_no_spec_truth_layer(self) -> None:
+        for relative in SPEC_TRUTH_FILES:
+            self.assertFalse((self.project / relative).exists(), relative)
+        self.assertEqual(
+            sorted(path.name for path in (self.project / "spec").iterdir()),
+            ["spec.md"],
+        )
+
+
+class SpecTruthLayerTests(unittest.TestCase):
+    layouts = ("webapp", "service", "plugin")
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="galadon-truth-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def init(self, layout: str, subdir: str = "") -> Path:
+        project = self.tmp / (subdir or layout)
+        code, out, err = run(
+            "init",
+            "--path",
+            str(project),
+            "--name",
+            "demo",
+            "--layout",
+            layout,
+            "--stack",
+            "python",
+        )
+        self.assertEqual(code, 0, out + err)
+        return project
+
+    def template_root(self) -> Path:
+        root = self.tmp / "template-plugin"
+        base = root / "templates" / "base"
+        base.mkdir(parents=True)
+        (base / "README.md").write_text("base", encoding="utf-8")
+        (root / "templates" / "profiles" / "web").mkdir(parents=True)
+        return root
+
+    def write_template(self, root: Path, relative: str, text: str) -> None:
+        path = root / "templates" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_each_layout_ships_the_four_spec_truth_files(self) -> None:
+        for layout in self.layouts:
+            with self.subTest(layout=layout):
+                project = self.init(layout)
+                for relative in SPEC_TRUTH_FILES:
+                    path = project / relative
+                    self.assertTrue(path.is_file(), f"{layout}: {relative}")
+                    text = path.read_text(encoding="utf-8")
+                    self.assertGreater(len(text.strip()), 0, f"{layout}: {relative}")
+                    self.assertNotIn("{{", text, f"{layout}: {relative}")
+                    self.assertNotIn("TODO", text, f"{layout}: {relative}")
+                    self.assertNotIn("FIXME", text, f"{layout}: {relative}")
+
+    def test_spec_truth_layer_states_the_required_rules(self) -> None:
+        project = self.init("webapp")
+        index = (project / "spec" / "INDEX.md").read_text(encoding="utf-8")
+        for marker in (
+            "F-<DOMAIN>-01",
+            "| ID | Feature point | GATE | 主落点 |",
+            "`1w`",
+            "`2w`",
+        ):
+            self.assertIn(marker, index)
+        domains = (project / "spec" / "domains" / "README.md").read_text(encoding="utf-8")
+        for marker in ("`impl`", "spec/INDEX.md", "behaviour truth"):
+            self.assertIn(marker, domains)
+        testing = (project / "spec" / "TESTING.md").read_text(encoding="utf-8")
+        for marker in (
+            "backend route",
+            "database schema",
+            "UI component",
+            "deployment config",
+            "docs only",
+            "`checks.test`",
+        ):
+            self.assertIn(marker, testing)
+        constitution = (project / "spec" / "CONSTITUTION.md").read_text(encoding="utf-8")
+        for marker in (
+            "Never change silently",
+            "Requires review",
+            "testable acceptance criterion",
+        ):
+            self.assertIn(marker, constitution)
+
+    def test_a_fresh_layout_passes_check_with_the_truth_layer(self) -> None:
+        for layout in self.layouts:
+            with self.subTest(layout=layout):
+                project = self.init(layout, subdir=f"fresh-{layout}")
+                code, out, err = run("check", "--path", str(project), "--json")
+                self.assertEqual(code, 0, out + err)
+                report = json.loads(out)
+                self.assertTrue(report["ok"])
+                layout_result = item(report, "layout")
+                self.assertEqual(layout_result["code"], 0, layout_result["stdout"])
+
+    def test_shared_layer_renders_before_layout_common(self) -> None:
+        root = self.template_root()
+        self.write_template(root, "layouts/_shared/spec/INDEX.md", "shared")
+        self.write_template(root, "layouts/webapp/common/spec/INDEX.md", "common")
+        (root / "templates" / "layouts" / "webapp" / "python").mkdir(parents=True)
+        project = self.tmp / "override"
+        FileTemplateProvider(root).render(
+            project, "web", "solo", "demo", layout="webapp", stack="python"
+        )
+        self.assertEqual(
+            (project / "spec" / "INDEX.md").read_text(encoding="utf-8"),
+            "common",
+        )
+
+    def test_layout_none_does_not_render_the_shared_layer(self) -> None:
+        root = self.template_root()
+        self.write_template(root, "layouts/_shared/spec/INDEX.md", "shared")
+        project = self.tmp / "none-provider"
+        FileTemplateProvider(root).render(
+            project, "web", "solo", "demo", layout="none", stack="none"
+        )
+        self.assertTrue((project / "README.md").is_file())
+        self.assertFalse((project / "spec" / "INDEX.md").exists())
+
 
 class CompatibilityAndGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="galadon-layout-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
-    def init(self, *extra: str, name: str = "demo") -> Path:
-        project = self.tmp / "demo"
+    def init(self, *extra: str, name: str = "demo", subdir: str = "demo") -> Path:
+        project = self.tmp / subdir
         code, out, err = run("init", "--path", str(project), "--name", name, *extra)
         self.assertEqual(code, 0, out + err)
         return project
@@ -410,6 +552,40 @@ class CompatibilityAndGateTests(unittest.TestCase):
         code, out, err = run("check", "--path", str(project), "--json")
         self.assertNotIn("Traceback", err)
         return code, json.loads(out)
+
+    def assert_missing_contract_path(self, relative: str, expected: str) -> None:
+        project = self.init(
+            "--layout",
+            "webapp",
+            "--stack",
+            "python",
+            subdir=f"missing-{relative.replace('/', '-').strip('-')}",
+        )
+        target = project / relative
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        code, report = self.check(project)
+        self.assertEqual(code, 1)
+        layout = item(report, "layout")
+        self.assertEqual(layout["code"], 1)
+        self.assertIn("layout contract (webapp) missing:", layout["stdout"])
+        self.assertIn(expected, layout["stdout"])
+
+    def test_contract_gate_names_a_missing_spec_index(self) -> None:
+        self.assert_missing_contract_path("spec/INDEX.md", "spec/INDEX.md")
+
+    def test_contract_gate_names_a_missing_spec_domains_dir(self) -> None:
+        self.assert_missing_contract_path("spec/domains", "spec/domains/")
+
+    def test_contract_gate_names_a_missing_spec_testing(self) -> None:
+        self.assert_missing_contract_path("spec/TESTING.md", "spec/TESTING.md")
+
+    def test_contract_gate_names_a_missing_spec_constitution(self) -> None:
+        self.assert_missing_contract_path(
+            "spec/CONSTITUTION.md", "spec/CONSTITUTION.md"
+        )
 
     def test_stack_none_fails_with_no_checks_configured(self) -> None:
         project = self.init("--layout", "webapp", "--stack", "none")

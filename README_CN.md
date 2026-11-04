@@ -63,9 +63,15 @@ galadon next                              # 当前阶段 + 一个下一步
 | 版式 | 适用 | 生成 |
 |---|---|---|
 | `none`（默认） | 只要五阶段循环 | 基础模板 |
-| `webapp` | 前后端一体的产品 | `server/`、`web/`、`e2e/`、`tests/`、`scripts/`、`deploy/`、`openspec/`、`spec/`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
-| `service` | 纯后端或定时任务 | `server/`、`tests/`、`scripts/`、`deploy/`、`openspec/`、`spec/`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
-| `plugin` | 可分发 agent 插件 | `bin/<project>`、`src/<project>/`、`skills/<project>/`、`docs/`、`tests/`、`scripts/`、`openspec/`、`spec/`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
+| `webapp` | 前后端一体的产品 | `server/`、`web/`、`e2e/`、`tests/`、`scripts/`、`deploy/`、`openspec/`、`spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
+| `service` | 纯后端或定时任务 | `server/`、`tests/`、`scripts/`、`deploy/`、`openspec/`、`spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
+| `plugin` | 可分发 agent 插件 | `bin/<project>`、`src/<project>/`、`skills/<project>/`、`docs/`、`tests/`、`scripts/`、`openspec/`、`spec/{spec.md,INDEX.md,TESTING.md,CONSTITUTION.md,domains/}`、`wiki/{knowledge,progress,runbook}/`、`.agents/`、`config.md` |
+
+每个非 `none` 版式还带 `spec/` 真值层：`INDEX.md`（活的功能索引）、
+`domains/README.md`（每个领域一份行为契约）、`TESTING.md`（改动到检查的触发
+矩阵）、`CONSTITUTION.md`（硬规则）。这四个文件只在
+`templates/layouts/_shared/` 存一份，先于各版式自己的 `common/` 层渲染，所以
+版式可以覆盖，而 `none` 保持不变。
 
 `--stack` 决定代码骨架与真实检查命令：
 
@@ -78,7 +84,8 @@ galadon next                              # 当前阶段 + 一个下一步
 非 `none` 版式自带至少一个真跑的测试，`init` 完 `galadon check` 就是绿的；
 build 会编译/语法校验版式交付的每个源码根目录，并对 plugin 的 bash wrapper
 用 `bash -n`（两种栈都覆盖），入口文件写坏会直接失败而不是假绿。
-同时校验目录契约：`AGENTS.md`、`openspec/config.yaml`、`spec/`、`wiki/` 三个目录、
+同时校验目录契约：`AGENTS.md`、`openspec/config.yaml`、`spec/INDEX.md`、
+`spec/domains/`、`spec/TESTING.md`、`spec/CONSTITUTION.md`、`wiki/` 三个目录、
 `.agents/` 六个槽位、非空 checks、`.gitignore` 里的 `out/` 与 `.agents/`——
 缺项直接失败并点名。模板里 `.agents/` 存成 `__agents__/`（本仓库 gitignore 了
 `.agents/`），渲染时映射回来。

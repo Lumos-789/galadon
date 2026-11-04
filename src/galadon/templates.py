@@ -14,6 +14,10 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 # under a neutral name and the renderer maps it back.
 PATH_ALIASES = {"__agents__": ".agents", "gitignore": ".gitignore"}
 
+# One copy of the spec truth layer serves every non-none layout. It renders
+# before the layout's own common layer so a layout can override a shared file.
+SHARED_LAYER = "_shared"
+
 # Base stubs a layout replaces with a real layer: layouts generate code under
 # `src/` and move the retro into `wiki/progress/`, so the base README and the
 # root retro stub would be wrong or duplicated.
@@ -72,8 +76,15 @@ class FileTemplateProvider:
         if not overlay.is_dir():
             raise TemplateError(f"unknown template profile: {profile}")
 
+        # Explicit order: base, profile, shared, layout/common, layout/<stack>.
+        # Later layers win, so a layout may override a shared file; `none`
+        # never renders the shared layer.
         layers: list[tuple[Path, bool]] = [(base, True), (overlay, False)]
         if layout != "none":
+            shared = self.plugin_root / "templates" / "layouts" / SHARED_LAYER
+            if not shared.is_dir():
+                raise TemplateError(f"missing shared layout template: {shared}")
+            layers.append((shared, False))
             layout_root = self.plugin_root / "templates" / "layouts" / layout
             common = layout_root / "common"
             if not common.is_dir():

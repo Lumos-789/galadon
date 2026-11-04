@@ -76,11 +76,15 @@ behaviour.
 | `service` | backend or scheduled job | `server/`, `tests/`, `spec/`, `wiki/`, `.agents/` |
 | `plugin` | distributable agent plugin | `bin/`, `src/`, `skills/`, `docs/`, `tests/`, `spec/`, `wiki/`, `.agents/` |
 
-Every non-`none` layout gets real checks and a passing test, and `galadon check`
-enforces the layout contract (`AGENTS.md`, `openspec/config.yaml`, `spec/`, the
-three `wiki/` directories, the six `.agents/` slots, non-empty checks, and
-`out/` + `.agents/` in `.gitignore`). When the gate fails, report the named
-missing items instead of creating empty stubs.
+Every non-`none` layout gets real checks and a passing test. It also ships the
+`spec/` truth layer once from `templates/layouts/_shared/`: `INDEX.md`,
+`domains/`, `TESTING.md` and `CONSTITUTION.md`, rendered before the layout's
+`common/` layer so a layout can override it. `galadon check` enforces the layout
+contract (`AGENTS.md`, `openspec/config.yaml`, `spec/INDEX.md`, `spec/domains/`,
+`spec/TESTING.md`, `spec/CONSTITUTION.md`, the three `wiki/` directories, the
+six `.agents/` slots, non-empty checks, and `out/` + `.agents/` in
+`.gitignore`). When the gate fails, report the named missing items instead of
+creating empty stubs.
 
 ## Rules
 

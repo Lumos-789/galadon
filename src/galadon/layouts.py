@@ -73,9 +73,17 @@ STACK_CHECKS: dict[str, tuple[str, str]] = {
     "none": ("", ""),
 }
 
-CONTRACT_FILES = ("AGENTS.md", "openspec/config.yaml")
+# The spec truth layer: one living index, one behaviour file per domain, one
+# test matrix and one constitution. Each path is named individually in the gate.
+SPEC_TRUTH_FILES = (
+    "spec/INDEX.md",
+    "spec/TESTING.md",
+    "spec/CONSTITUTION.md",
+)
+CONTRACT_FILES = ("AGENTS.md", "openspec/config.yaml", *SPEC_TRUTH_FILES)
 CONTRACT_DIRS = (
     "spec",
+    "spec/domains",
     "wiki/knowledge",
     "wiki/progress",
     "wiki/runbook",

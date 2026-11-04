@@ -16,14 +16,24 @@
   `galadon check` is genuinely green right after `init`; `--stack none` still
   fails loudly with "no checks configured".
 - `galadon check` enforces the layout contract for non-`none` layouts:
-  `AGENTS.md`, `openspec/config.yaml`, `spec/`, `wiki/{knowledge,progress,runbook}/`,
-  the six `.agents/` slots, non-empty checks, and `out/` + `.agents/` in
-  `.gitignore`. A missing item fails the gate and is named.
+  `AGENTS.md`, `openspec/config.yaml`, `spec/INDEX.md`, `spec/domains/`,
+  `spec/TESTING.md`, `spec/CONSTITUTION.md`,
+  `wiki/{knowledge,progress,runbook}/`, the six `.agents/` slots, non-empty
+  checks, and `out/` + `.agents/` in `.gitignore`. A missing item fails the gate
+  and is named.
+- Every non-`none` layout scaffolds the spec truth layer under `spec/`:
+  `INDEX.md` (living feature index with `F-<DOMAIN>-01` IDs, `1w`/`2w` gates
+  and `主落点` pointers), `domains/README.md` (behaviour truth and `impl`
+  pointers), `TESTING.md` (change-to-check trigger matrix) and
+  `CONSTITUTION.md` (hard rules). The files live once in
+  `templates/layouts/_shared/` and render before the layout's `common/` layer,
+  so a layout can override them; `none` is unchanged.
 - New `paths:` block in `galadon.yaml` (`spec`, `evidence`, `retro`, `release`)
   read by the loop instead of hardcoded constants. Defaults are the 0.2.x
   paths; layouts put `retro` under `wiki/progress/`.
-- Layout templates are organised as `templates/layouts/<layout>/{common,python,node}`
-  so shared files are written once per layout. `.agents/` is stored as
+- Layout templates are organised as `templates/layouts/<layout>/{common,python,node}`,
+  with the spec truth layer stored once in `templates/layouts/_shared/` and
+  rendered before each layout's `common/` layer. `.agents/` is stored as
   `__agents__/` because that directory is gitignored in this repository, and the
   renderer maps it back, substituting placeholders in paths as well as content.
 
