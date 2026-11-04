@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "galadon"
+version = "0.2.0"
+description = "A five-stage engineering loop for agent-built projects."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Lumos-789" }]
+dependencies = ["PyYAML>=6"]
+
+[project.scripts]
+galadon = "galadon.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

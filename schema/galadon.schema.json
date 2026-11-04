@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Galadon project configuration",
+  "type": "object",
+  "required": ["project", "template", "role", "deploy", "checks"],
+  "properties": {
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "template": {
+      "enum": ["web", "api", "static"]
+    },
+    "role": {
+      "enum": ["solo", "six-ring", "orchestrator"]
+    },
+    "deploy": {
+      "type": "object",
+      "required": ["adapter", "env"],
+      "additionalProperties": true,
+      "properties": {
+        "adapter": {
+          "enum": ["local", "ssh", "k8s"]
+        },
+        "env": {
+          "type": "string"
+        },
+        "build": {
+          "type": "string"
+        },
+        "migrate": {
+          "type": "string"
+        },
+        "release": {
+          "type": "string"
+        },
+        "probe_url": {
+          "type": "string"
+        },
+        "probe_expect": {
+          "type": "string"
+        },
+        "artifact": {
+          "type": "string"
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "properties": {
+        "build": {
+          "type": "string"
+        },
+        "test": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

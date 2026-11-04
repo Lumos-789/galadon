@@ -1,0 +1,24 @@
+project: {{PROJECT}}
+template: {{TEMPLATE}}
+role: {{ROLE}}
+
+deploy:
+  adapter: local
+  env: test
+  build: "true"
+  migrate: ""
+  release: "true"
+  probe_url: ""
+  probe_expect: ""
+  artifact: ""
+
+checks:
+  build: "true"
+  test: "true"
+  timeout: 300
+
+tools:
+  issue: local-md
+  ci: none
+  notify: stdout
+  secret: env-file

@@ -1,0 +1,49 @@
+{
+  "name": "galadon",
+  "version": "0.2.0",
+  "description": "A five-stage engineering loop for agent-built projects: spec, build, verify, ship, learn. Pluggable role, template, deploy and tool ports.",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests -v && node --test tests/test_plugin.mjs"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin/galadon",
+    "src/galadon/",
+    "skills/galadon/",
+    "templates/",
+    "examples/",
+    "schema/",
+    "index.js",
+    "cordis.patch.yml",
+    ".codex-plugin/plugin.json",
+    ".zcode-plugin/plugin.json",
+    ".release-gate.json",
+    "README.md",
+    "README_CN.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lumos-789/galadon"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "agent",
+    "workflow",
+    "scaffold",
+    "deploy"
+  ]
+}
