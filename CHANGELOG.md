@@ -9,6 +9,8 @@
   traceback.
 - The `local` DeployPort requires `deploy.probe_expect`: a bare HTTP 200 is not
   a version probe, so it no longer counts as a successful ship.
+- A missing PyYAML reports `galadon: PyYAML is required (pip install pyyaml)`
+  and exits 69 instead of an import traceback.
 
 ## 0.2.0
 
