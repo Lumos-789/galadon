@@ -71,11 +71,13 @@ galadon next                              # 当前阶段 + 一个下一步
 
 | 栈 | build | test |
 |---|---|---|
-| `python`（默认） | `python3 -m compileall -q src` | `python3 -m unittest discover -s tests -v` |
-| `node` | `node --check <版式入口>` | `npm test`（`node --test tests/`） |
+| `python`（默认） | `python3 -m compileall -f -q src server`；plugin 为 `src` + `bash -n bin/<project>` | `python3 -m unittest discover -s tests -v` |
+| `node` | `node --check <版式入口>`；plugin 为 + `bash -n bin/<project>` | `npm test`（`node --test tests/`） |
 | `none` | — | — |
 
 非 `none` 版式自带至少一个真跑的测试，`init` 完 `galadon check` 就是绿的；
+build 会编译/语法校验版式交付的每个源码根目录，并对 plugin 的 bash wrapper
+用 `bash -n`（两种栈都覆盖），入口文件写坏会直接失败而不是假绿。
 同时校验目录契约：`AGENTS.md`、`openspec/config.yaml`、`spec/`、`wiki/` 三个目录、
 `.agents/` 六个槽位、非空 checks、`.gitignore` 里的 `out/` 与 `.agents/`——
 缺项直接失败并点名。模板里 `.agents/` 存成 `__agents__/`（本仓库 gitignore 了

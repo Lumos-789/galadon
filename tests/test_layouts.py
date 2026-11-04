@@ -28,8 +28,8 @@ layouts (galadon init --layout):
   plugin   bin/<project> src/<project>/ skills/<project>/ docs/ tests/ scripts/ + openspec/ spec/ wiki/{knowledge,progress,runbook}/ .agents/
 
 stacks (galadon init --stack):
-  python   build: python3 -m compileall -q src | test: python3 -m unittest discover -s tests -v
-  node     build: node --check <entry> | test: npm test (package.json scripts.test = node --test tests/)
+  python   build: python3 -m compileall -f -q <layout sources> && <layout shell checks> | test: python3 -m unittest discover -s tests -v
+  node     build: node --check <entry> && <layout shell checks> | test: npm test (package.json scripts.test = node --test tests/)
   none     no checks: galadon check fails with "no checks configured — declare checks.build/checks.test"
 """
 
@@ -87,15 +87,47 @@ class LayoutTestCase(unittest.TestCase):
         self.assertIn("out/", ignore)
         self.assertIn(".agents/", ignore)
 
+    def source_files(self, *roots: str) -> list[str]:
+        files: list[str] = []
+        for root in roots:
+            files.extend(
+                path.relative_to(self.project).as_posix()
+                for path in sorted((self.project / root).rglob("*.py"))
+            )
+        return files
+
+    def assert_broken_file_fails(self, relative: str, gate: str, snippet: str) -> None:
+        path = self.project / relative
+        original = path.read_text(encoding="utf-8")
+        try:
+            path.write_text(original + snippet, encoding="utf-8")
+            code, report, err = self.check()
+            self.assertEqual(code, 1, f"{relative}: {err}")
+            result = item(report, gate)
+            self.assertNotEqual(result["code"], 0, f"{relative}: {result}")
+            output = result["stdout"] + result["stderr"]
+            self.assertIn(relative, output, f"{relative}: {output}")
+        finally:
+            path.write_text(original, encoding="utf-8")
+
 
 class PythonLayoutTests(LayoutTestCase):
     stack = "python"
+    python_roots = ("src", "server")
 
     def assert_python_test_ran(self, report: dict) -> None:
         test = item(report, "test")
         self.assertEqual(test["code"], 0, test["stdout"] + test["stderr"])
         self.assertIn("Ran 2 tests", test["stderr"])
         self.assertIn("OK", test["stderr"])
+
+    def assert_python_gates_cover_every_file(self) -> None:
+        for relative in self.source_files(*self.python_roots):
+            with self.subTest(gate="build", file=relative):
+                self.assert_broken_file_fails(relative, "build", "\ndef broken(:\n")
+        for relative in self.source_files("tests"):
+            with self.subTest(gate="test", file=relative):
+                self.assert_broken_file_fails(relative, "test", "\ndef broken(:\n")
 
 
 class WebappPythonTests(PythonLayoutTests):
@@ -121,7 +153,7 @@ class WebappPythonTests(PythonLayoutTests):
         config = self.config()
         self.assertEqual(config["layout"], "webapp")
         self.assertEqual(config["stack"], "python")
-        self.assertEqual(config["checks"]["build"], "python3 -m compileall -q src")
+        self.assertEqual(config["checks"]["build"], "python3 -m compileall -f -q src server")
         self.assertEqual(
             config["checks"]["test"],
             "python3 -m unittest discover -s tests -v",
@@ -133,6 +165,9 @@ class WebappPythonTests(PythonLayoutTests):
         self.assertTrue(report["ok"])
         self.assert_layout_contract_passes(report)
         self.assert_python_test_ran(report)
+
+    def test_webapp_python_build_checks_every_source_file(self) -> None:
+        self.assert_python_gates_cover_every_file()
 
 
 class ServicePythonTests(PythonLayoutTests):
@@ -153,7 +188,7 @@ class ServicePythonTests(PythonLayoutTests):
 
         config = self.config()
         self.assertEqual(config["stack"], "python")
-        self.assertEqual(config["checks"]["build"], "python3 -m compileall -q src")
+        self.assertEqual(config["checks"]["build"], "python3 -m compileall -f -q src server")
 
         code, report, err = self.check()
         self.assertEqual(code, 0, err)
@@ -161,9 +196,13 @@ class ServicePythonTests(PythonLayoutTests):
         self.assert_layout_contract_passes(report)
         self.assert_python_test_ran(report)
 
+    def test_service_python_build_checks_every_source_file(self) -> None:
+        self.assert_python_gates_cover_every_file()
+
 
 class PluginPythonTests(PythonLayoutTests):
     layout = "plugin"
+    python_roots = ("src",)
 
     def test_plugin_python_ships_the_layers_and_a_green_check(self) -> None:
         for path in (
@@ -182,6 +221,7 @@ class PluginPythonTests(PythonLayoutTests):
 
         config = self.config()
         self.assertEqual(config["layout"], "plugin")
+        self.assertEqual(config["checks"]["build"], "python3 -m compileall -f -q src && bash -n bin/demo")
         self.assertEqual(config["checks"]["test"], "python3 -m unittest discover -s tests -v")
 
         code, report, err = self.check()
@@ -190,15 +230,25 @@ class PluginPythonTests(PythonLayoutTests):
         self.assert_layout_contract_passes(report)
         self.assert_python_test_ran(report)
 
+    def test_plugin_python_build_checks_every_source_file(self) -> None:
+        self.assert_python_gates_cover_every_file()
+
+    def test_plugin_python_build_checks_the_shell_wrapper(self) -> None:
+        self.assert_broken_file_fails("bin/demo", "build", "\ndef broken(:\n")
+
 
 class NodeLayoutTests(LayoutTestCase):
     stack = "node"
+    node_entry = "server/index.js"
 
     def assert_node_test_ran(self, report: dict) -> None:
         test = item(report, "test")
         self.assertEqual(test["code"], 0, test["stdout"] + test["stderr"])
         self.assertRegex(test["stdout"], r"pass [1-9]\d*")
         self.assertNotIn("pass 0", test["stdout"])
+
+    def assert_node_build_checks_entry(self) -> None:
+        self.assert_broken_file_fails(self.node_entry, "build", "\nconst broken = ;\n")
 
 
 class WebappNodeTests(NodeLayoutTests):
@@ -221,6 +271,9 @@ class WebappNodeTests(NodeLayoutTests):
         self.assert_layout_contract_passes(report)
         self.assert_node_test_ran(report)
 
+    def test_webapp_node_build_checks_the_entry(self) -> None:
+        self.assert_node_build_checks_entry()
+
 
 class ServiceNodeTests(NodeLayoutTests):
     layout = "service"
@@ -241,9 +294,13 @@ class ServiceNodeTests(NodeLayoutTests):
         self.assert_layout_contract_passes(report)
         self.assert_node_test_ran(report)
 
+    def test_service_node_build_checks_the_entry(self) -> None:
+        self.assert_node_build_checks_entry()
+
 
 class PluginNodeTests(NodeLayoutTests):
     layout = "plugin"
+    node_entry = "src/index.js"
 
     def test_plugin_node_ships_the_package_and_a_green_check(self) -> None:
         self.assertTrue((self.project / "src" / "index.js").is_file())
@@ -254,7 +311,10 @@ class PluginNodeTests(NodeLayoutTests):
         self.assertEqual(package["bin"]["demo"], "bin/demo")
 
         config = self.config()
-        self.assertEqual(config["checks"]["build"], "node --check src/index.js")
+        self.assertEqual(
+            config["checks"]["build"],
+            "node --check src/index.js && bash -n bin/demo",
+        )
         self.assertEqual(config["checks"]["test"], "npm test")
 
         code, report, err = self.check()
@@ -262,6 +322,12 @@ class PluginNodeTests(NodeLayoutTests):
         self.assertTrue(report["ok"])
         self.assert_layout_contract_passes(report)
         self.assert_node_test_ran(report)
+
+    def test_plugin_node_build_checks_the_entry(self) -> None:
+        self.assert_node_build_checks_entry()
+
+    def test_plugin_node_build_checks_the_shell_wrapper(self) -> None:
+        self.assert_broken_file_fails("bin/demo", "build", "\ndef broken(:\n")
 
 
 class NoneLayoutTests(LayoutTestCase):

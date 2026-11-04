@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import re
 import shutil
 from datetime import date
 from pathlib import Path
 
 from .config import DEFAULT_PATHS, LAYOUTS, STACKS
-from .layouts import LAYOUT_RETRO, checks_for
+from .layouts import LAYOUT_RETRO, checks_for, npm_name, package_name
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 
@@ -23,20 +22,6 @@ LAYOUT_SUPERSEDES = frozenset({"src/README.md", "wiki/retro.md"})
 
 class TemplateError(ValueError):
     pass
-
-
-def package_name(name: str) -> str:
-    cleaned = re.sub(r"[^0-9A-Za-z_]", "_", name).strip("_").lower()
-    if not cleaned:
-        cleaned = "app"
-    return f"_{cleaned}" if cleaned[0].isdigit() else cleaned
-
-
-def npm_name(name: str) -> str:
-    cleaned = re.sub(r"[^a-z0-9._~-]+", "-", name.lower()).strip("-")
-    if not cleaned:
-        cleaned = "app"
-    return f"app{cleaned}" if cleaned[0] in "._" else cleaned
 
 
 class FileTemplateProvider:
@@ -102,7 +87,7 @@ class FileTemplateProvider:
                     )
                 layers.append((stack_dir, False))
 
-        build_check, test_check = checks_for(layout, effective_stack)
+        build_check, test_check = checks_for(layout, effective_stack, name)
         values = {
             "{{PROJECT}}": name,
             "{{PACKAGE}}": package_name(name),

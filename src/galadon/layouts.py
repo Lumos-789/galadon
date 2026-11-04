@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +19,8 @@ AGENT_SLOTS = ("plans", "evidence", "archive", "skills", "tmp", "wiki")
 class LayoutSpec:
     creates: str
     node_entry: str | None
+    python_roots: tuple[str, ...] = ()
+    shell_checks: tuple[str, ...] = ()
 
 
 # The layout vocabulary was sampled from three unrelated production projects in
@@ -33,6 +36,7 @@ LAYOUT_SPECS: dict[str, LayoutSpec] = {
             "wiki/{knowledge,progress,runbook}/ .agents/"
         ),
         node_entry="server/index.js",
+        python_roots=("src", "server"),
     ),
     "service": LayoutSpec(
         creates=(
@@ -40,6 +44,7 @@ LAYOUT_SPECS: dict[str, LayoutSpec] = {
             "wiki/{knowledge,progress,runbook}/ .agents/"
         ),
         node_entry="server/index.js",
+        python_roots=("src", "server"),
     ),
     "plugin": LayoutSpec(
         creates=(
@@ -47,17 +52,24 @@ LAYOUT_SPECS: dict[str, LayoutSpec] = {
             "openspec/ spec/ wiki/{knowledge,progress,runbook}/ .agents/"
         ),
         node_entry="src/index.js",
+        python_roots=("src",),
+        # The plugin ships a bash wrapper under bin/, so the build also
+        # syntax-checks it instead of trusting a file no compiler reads.
+        shell_checks=("bash -n bin/{bin}",),
     ),
 }
 
-# One table for every stack's real commands. `{entry}` is filled from the
-# layout's node entry; keep the literals here instead of scattering them.
+# One table for every stack's real commands. `{roots}` is filled from the
+# layout's python source directories, `{shell}` from its shell checks and
+# `{entry}` from its node entry. `-f` is deliberate: without it compileall
+# skips a file whose mtime moved within the same second, which made a broken
+# entry point pass right after a green check.
 STACK_CHECKS: dict[str, tuple[str, str]] = {
     "python": (
-        "python3 -m compileall -q src",
+        "python3 -m compileall -f -q {roots}{shell}",
         "python3 -m unittest discover -s tests -v",
     ),
-    "node": ("node --check {entry}", "npm test"),
+    "node": ("node --check {entry}{shell}", "npm test"),
     "none": ("", ""),
 }
 
@@ -72,19 +84,46 @@ CONTRACT_DIRS = (
 CONTRACT_IGNORES = ("out", ".agents")
 
 
-def checks_for(layout: str, stack: str) -> tuple[str, str]:
+def package_name(name: str) -> str:
+    cleaned = re.sub(r"[^0-9A-Za-z_]", "_", name).strip("_").lower()
+    if not cleaned:
+        cleaned = "app"
+    return f"_{cleaned}" if cleaned[0].isdigit() else cleaned
+
+
+def npm_name(name: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9._~-]+", "-", name.lower()).strip("-")
+    if not cleaned:
+        cleaned = "app"
+    return f"app{cleaned}" if cleaned[0] in "._" else cleaned
+
+
+def checks_for(layout: str, stack: str, name: str = "") -> tuple[str, str]:
     if layout not in LAYOUT_SPECS:
         raise ValueError(f"unknown layout: {layout}")
     if stack not in STACK_CHECKS:
         raise ValueError(f"unknown stack: {stack}")
     if stack == "none":
         return ("", "")
+    spec = LAYOUT_SPECS[layout]
     build, test = STACK_CHECKS[stack]
-    if "{entry}" in build:
-        entry = LAYOUT_SPECS[layout].node_entry
+    shell = ""
+    if spec.shell_checks:
+        if not name:
+            raise ValueError(f"layout {layout} shell checks need the project name")
+        shell = "".join(
+            f" && {command.format(bin=npm_name(name))}"
+            for command in spec.shell_checks
+        )
+    if stack == "python":
+        if not spec.python_roots:
+            raise ValueError(f"layout {layout} has no python sources")
+        build = build.format(roots=" ".join(spec.python_roots), shell=shell)
+    else:
+        entry = spec.node_entry
         if entry is None:
             raise ValueError(f"layout {layout} has no node entry")
-        build = build.format(entry=entry)
+        build = build.format(entry=entry, shell=shell)
     return (build, test)
 
 
@@ -100,9 +139,13 @@ def layout_listing() -> str:
                 f'  none     no checks: galadon check fails with "{MISSING_CHECKS}"'
             )
             continue
-        build = build.format(entry="<entry>")
+        display = (
+            build.replace("{roots}", "<layout sources>")
+            .replace("{entry}", "<entry>")
+            .replace("{shell}", " && <layout shell checks>")
+        )
         note = " (package.json scripts.test = node --test tests/)" if stack == "node" else ""
-        lines.append(f"  {stack:<8} build: {build} | test: {test}{note}")
+        lines.append(f"  {stack:<8} build: {display} | test: {test}{note}")
     return "\n".join(lines)
 
 

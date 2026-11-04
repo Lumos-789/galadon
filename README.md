@@ -76,12 +76,14 @@ projects this scaffold was sampled from. The default
 
 | Stack | build | test |
 |---|---|---|
-| `python` (default) | `python3 -m compileall -q src` | `python3 -m unittest discover -s tests -v` |
-| `node` | `node --check <layout entry>` | `npm test` (`node --test tests/`) |
+| `python` (default) | `python3 -m compileall -f -q src server`; plugin: `src` + `bash -n bin/<project>` | `python3 -m unittest discover -s tests -v` |
+| `node` | `node --check <layout entry>`; plugin: + `bash -n bin/<project>` | `npm test` (`node --test tests/`) |
 | `none` | — | — |
 
 A non-`none` layout ships at least one real test, so `galadon check` is green
-right after `init`. It also enforces the layout contract: `AGENTS.md`,
+right after `init`. The build compiles or syntax-checks every source root the
+layout ships and runs `bash -n` on the plugin's bash wrapper for both stacks, so
+a broken entry point fails the gate instead of passing it. It also enforces the layout contract: `AGENTS.md`,
 `openspec/config.yaml`, `spec/`, the three `wiki/` directories, the six
 `.agents/` slots, non-empty checks, and `out/` + `.agents/` in `.gitignore`. A
 missing item fails the gate and is named. `.agents/` is stored in the templates

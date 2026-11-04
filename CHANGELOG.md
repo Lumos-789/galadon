@@ -9,9 +9,10 @@
   shipped layouts and stacks.
 - `layout=none` keeps 0.2.x behaviour: the base template only, the same
   directories, and the same artifact paths.
-- Real stack checks: `python3 -m compileall -q src` plus
+- Real stack checks: `python3 -m compileall -f -q <layout source roots>` and
   `python3 -m unittest discover -s tests -v`, or `node --check <entry>` plus
-  `npm test` (`node --test tests/`). Every layout ships passing tests, so
+  `npm test` (`node --test tests/`). The plugin layout also runs
+  `bash -n bin/<project>` on both stacks. Every layout ships passing tests, so
   `galadon check` is genuinely green right after `init`; `--stack none` still
   fails loudly with "no checks configured".
 - `galadon check` enforces the layout contract for non-`none` layouts:
