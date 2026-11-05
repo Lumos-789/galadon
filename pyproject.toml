@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "galadon"
-version = "0.3.1"
+version = "0.3.2"
 description = "A five-stage engineering loop for agent-built projects, with a layout/stack scaffold generator."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,6 +14,9 @@ dependencies = ["PyYAML>=6"]
 
 [project.scripts]
 galadon = "galadon.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools]
 package-dir = { "" = "src" }

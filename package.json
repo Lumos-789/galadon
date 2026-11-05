@@ -1,11 +1,12 @@
 {
   "name": "galadon",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A five-stage engineering loop for agent-built projects: spec, build, verify, ship, learn, with a layout/stack scaffold generator. Pluggable role, template and deploy ports.",
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "python3 -m unittest discover -s tests -v && node --test tests/test_plugin.mjs"
+    "test": "python3 -m unittest discover -s tests -v && node --test tests/test_plugin.mjs",
+    "prepack": "find . -name __pycache__ -type d -prune -exec rm -rf {} + ; find . -name '*.pyc' -delete"
   },
   "exports": {
     ".": "./index.js",

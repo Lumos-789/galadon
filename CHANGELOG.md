@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.2
+
+- `pytest` no longer walks into `examples/`. Running it from the repo root used
+  to collect `examples/minimal/tests/test_health.py`, import the example's
+  `server.py`, and leave `__pycache__` inside the directory that ships in the
+  npm tarball. `files` is an allowlist and overrides `.npmignore`, so those
+  bytecode files ride into the package and turn the "npm tarball excludes
+  Python bytecode" test red for anyone who ran pytest before `node --test`.
+  `npm test` was unaffected because unittest discovery already stays in
+  `tests/`, which is why the failure surfaced only on the pytest path. The
+  example is still covered: it is exercised from a scratch copy.
+- `prepack` deletes `__pycache__` and `*.pyc` before packing, so the tarball is
+  bytecode-free regardless of what ran in the tree beforehand.
+
 ## 0.3.1
 
 - `galadon.yaml` rejects unknown top-level keys instead of ignoring them. The
