@@ -15,6 +15,27 @@
   re-check used the same probe.
 - The probe fetch moved into `adapters/probe.py`, so the `local` and `ssh`
   adapters share one readiness policy instead of carrying a copy each.
+- `bootstrap` refuses a `remote_root` it does not own. It used to `install -d`
+  whatever path it was given and write its ownership marker into it, so a
+  directory with someone else's data became a galadon root; `teardown` then
+  deleted it, because the marker it checks was planted by that same bootstrap.
+  It now refuses a non-empty unmarked directory, and a root that carries another
+  slot's marker, before touching the user, the unit or Caddy.
+- `teardown` no longer fails when the run user is shared. `userdel` on the
+  default `galadon` user fails while any other slot runs as it — which is the
+  normal state on a host with two deployments — and the teardown aborted
+  *after* removing the root. It now leaves the user in place, says so, and
+  reports `user_skip_reason`, while still failing loudly if the user cannot be
+  removed for any other reason.
+- `ship` refuses to publish a dirty working tree. The commit stamped on the
+  release comes from `HEAD`, but the build copies the working tree, so
+  uncommitted changes shipped under a commit they are not part of and a later
+  rollback would restore a version that never existed. The loop's own files
+  (evidence, the release record, `.galadon/`, the phase block in `AGENTS.md`)
+  are exempt.
+- `ship --dry-run` no longer demands `--yes-prod`. Previewing a production
+  release required the flag that authorises one; the plan now prints
+  `requires: --yes-prod` instead, and the guard still applies to a real run.
 
 ## 0.3.2
 

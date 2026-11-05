@@ -60,6 +60,30 @@ def git_commit(root: Path) -> str | None:
     return proc.stdout.strip() if proc.returncode == 0 else None
 
 
+def git_dirty_paths(root: Path) -> list[str] | None:
+    """Tracked paths with uncommitted changes, or None when git cannot answer."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    paths: list[str] = []
+    for line in proc.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        path = line[3:].strip().strip('"')
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1].strip().strip('"')
+        paths.append(path)
+    return paths
+
+
 def run_shell(
     command: str,
     cwd: Path,

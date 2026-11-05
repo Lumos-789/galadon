@@ -359,6 +359,16 @@ class GaladonCliTests(unittest.TestCase):
         self.assertEqual(code, 2, out + err)
         self.assertIn("--yes-prod", err)
 
+    def test_prod_dry_run_previews_without_the_confirmation_flag(self) -> None:
+        self.write_spec()
+        code, out, err = run(
+            "ship", "--path", str(self.project), "--env", "prod", "--dry-run", "--json"
+        )
+        self.assertEqual(code, 0, out + err)
+        plan = json.loads(out)
+        self.assertEqual(plan["env"], "prod")
+        self.assertEqual(plan["requires"], "--yes-prod")
+
     def test_unimplemented_adapter_fails_loud(self) -> None:
         self.write_spec()
         data = self.config()

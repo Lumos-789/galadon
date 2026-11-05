@@ -17,6 +17,7 @@ from .loop import (
     infer_phase,
     next_payload,
     save_state,
+    uncommitted_paths,
     update_agents_block,
 )
 from .ports import DeployContext, ProbeResult
@@ -149,6 +150,13 @@ def cmd_ship(args: argparse.Namespace) -> int:
     if phase in {"learn", "done"}:
         raise ConfigError("this change has already shipped; write the retro or start a new spec")
 
+    uncommitted = uncommitted_paths(root, config)
+    if uncommitted:
+        raise ConfigError(
+            "uncommitted changes would ship under commit "
+            f"{git_commit(root) or '(unknown)'}: {', '.join(uncommitted)}; commit them first"
+        )
+
     report = run_checks(root, config)
     if not report["ok"]:
         payload = _sync_agents(root, config)
@@ -156,8 +164,6 @@ def cmd_ship(args: argparse.Namespace) -> int:
         print(payload["next"], file=sys.stderr)
         return 2
 
-    if env == "prod" and not args.yes_prod:
-        raise ConfigError("production release requires --yes-prod in the current session")
     adapter = adapter_for(config.deploy.adapter)
     ctx = DeployContext(root=root, config=config, env=env)
 
@@ -172,8 +178,13 @@ def cmd_ship(args: argparse.Namespace) -> int:
             "release": config.deploy.release or "(no command)",
             "probe": config.deploy.probe_url or "(not configured: ship will fail)",
         }
+        if env == "prod":
+            plan["requires"] = "--yes-prod"
         print(json.dumps(plan, ensure_ascii=False, indent=2) if args.json else "\n".join(f"{k}: {v}" for k, v in plan.items()))
         return 0
+
+    if env == "prod" and not args.yes_prod:
+        raise ConfigError("production release requires --yes-prod in the current session")
 
     print(f"Galadon ship: {env} -> {adapter.describe(ctx)}", file=sys.stderr)
     preflight = getattr(adapter, "preflight", None)

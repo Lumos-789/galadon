@@ -505,6 +505,20 @@ listen={_q(listen)}
 marker={_q(marker)}
 unit_path={_q(unit_path)}
 
+marker_file="$root/{ROOT_MARKER}"
+if [ -d "$root" ]; then
+  if [ -f "$marker_file" ]; then
+    existing=$(cat "$marker_file")
+    if [ "$existing" != "$marker" ]; then
+      echo "galadon: refusing to bootstrap $root: it belongs to marker $existing" >&2
+      exit 65
+    fi
+  elif [ -n "$(ls -A "$root" 2>/dev/null)" ]; then
+    echo "galadon: refusing to bootstrap $root: directory is not empty and carries no {ROOT_MARKER}" >&2
+    exit 65
+  fi
+fi
+
 manage_user={1 if self._manage_user(ctx) else 0}
 user_created=0
 if [ "$manage_user" -eq 1 ]; then
@@ -726,18 +740,24 @@ fi
 
 rm -rf "$root"
 user_removed=0
+user_skipped=""
 if [ "$manage_user" -eq 1 ] && id -u "$run_user" >/dev/null 2>&1; then
-  if ! userdel "$run_user"; then
+  if userdel "$run_user" 2>/dev/null; then
+    user_removed=1
+  elif pgrep -u "$run_user" >/dev/null 2>&1; then
+    user_skipped="still in use by another service"
+    echo "galadon: left $run_user in place: still in use by another service" >&2
+  else
     echo "galadon: could not remove system user $run_user" >&2
     exit 1
   fi
-  user_removed=1
 fi
 printf 'GALADON_SERVICE_REMOVED=%s\\n' "$service_removed"
 printf 'GALADON_CADDY_CHANGED=%s\\n' "$caddy_changed"
 printf 'GALADON_CADDY_BACKUP=%s\\n' "$backup"
 printf 'GALADON_ROOT_REMOVED=1\\n'
 printf 'GALADON_USER_REMOVED=%s\\n' "$user_removed"
+printf 'GALADON_USER_SKIPPED=%s\\n' "$user_skipped"
 printf 'GALADON_OK=1\\n'
 """
         fields = self._remote(ctx, script, "teardown")
@@ -753,4 +773,5 @@ printf 'GALADON_OK=1\\n'
             },
             "root_removed": fields.get("GALADON_ROOT_REMOVED") == "1",
             "user_removed": fields.get("GALADON_USER_REMOVED") == "1",
+            "user_skip_reason": fields.get("GALADON_USER_SKIPPED") or None,
         }

@@ -7,7 +7,7 @@ from typing import Any
 
 from .config import ProjectConfig
 from .roles import role_policy_for
-from .util import now_iso, read_json, write_json
+from .util import git_dirty_paths, now_iso, read_json, write_json
 
 CHECKS_PATH = Path(".galadon/checks.json")
 
@@ -59,6 +59,27 @@ def retro_ok(root: Path, config: ProjectConfig) -> tuple[bool, str]:
         if heading not in text:
             return False, f"{relative} is missing {heading}"
     return True, "retro is complete"
+
+
+def uncommitted_paths(root: Path, config: ProjectConfig) -> list[str]:
+    """Changes that would ship under a commit they are not part of.
+
+    The loop's own files are rewritten by `check`/`ship`: the evidence file, the
+    release record, the state directory and the phase block in `AGENTS.md`.
+    """
+    paths = git_dirty_paths(root)
+    if paths is None:
+        return []
+    generated = {
+        config.paths.evidence.as_posix(),
+        config.paths.release.as_posix(),
+        "AGENTS.md",
+    }
+    return sorted(
+        path
+        for path in paths
+        if path not in generated and not path.startswith(".galadon/")
+    )
 
 
 def infer_phase(root: Path, config: ProjectConfig) -> str:

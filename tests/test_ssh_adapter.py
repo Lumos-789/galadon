@@ -433,6 +433,39 @@ class SshAdapterTests(unittest.TestCase):
         self.assertIn("ExecStart=/usr/bin/python3 /srv/demo/current/server.py", script)
         self.assertIn("galadon bootstrap --env", script)
 
+    def test_bootstrap_refuses_a_non_empty_root_it_does_not_own(self) -> None:
+        self.runner.ssh_output = "GALADON_OK=1\n"
+        self.adapter.bootstrap(self.ctx)
+        script = self.runner.calls[0]["input"]
+        self.assertIn('marker_file="$root/.galadon-root"', script)
+        self.assertIn("refusing to bootstrap", script)
+        self.assertIn("directory is not empty and carries no .galadon-root", script)
+        self.assertIn("it belongs to marker $existing", script)
+        # the ownership check must decide before anything is mutated
+        self.assertLess(
+            script.index("refusing to bootstrap"),
+            script.index('useradd --system'),
+        )
+        self.assertLess(
+            script.index("refusing to bootstrap"),
+            script.index('printf \'%s\\n\' "$marker" > "$root/.galadon-root"'),
+        )
+
+    def test_teardown_leaves_a_shared_run_user_in_place(self) -> None:
+        self.runner.ssh_output = (
+            "GALADON_SERVICE_REMOVED=1\n"
+            "GALADON_ROOT_REMOVED=1\n"
+            "GALADON_USER_REMOVED=0\n"
+            "GALADON_USER_SKIPPED=still in use by another service\n"
+            "GALADON_OK=1\n"
+        )
+        result = self.adapter.teardown(self.ctx)
+        script = self.runner.calls[0]["input"]
+        self.assertFalse(result["user_removed"])
+        self.assertEqual(result["user_skip_reason"], "still in use by another service")
+        self.assertIn('elif pgrep -u "$run_user"', script)
+        self.assertIn("left $run_user in place", script)
+
     def test_bootstrap_writes_root_marker(self) -> None:
         self.runner.ssh_output = "GALADON_OK=1\n"
         self.adapter.bootstrap(self.ctx)
