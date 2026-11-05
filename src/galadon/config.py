@@ -8,6 +8,21 @@ import yaml
 
 LAYOUTS = ("none", "webapp", "service", "plugin")
 STACKS = ("python", "node", "none")
+TEMPLATES = ("web", "api", "static")
+
+# The shipped schema declares `additionalProperties: false` at the top level;
+# the loader accepted anything, so a block that stopped meaning something — the
+# retired `tools:` port — sat in real galadon.yaml files doing nothing.
+TOP_LEVEL_KEYS = (
+    "project",
+    "template",
+    "role",
+    "layout",
+    "stack",
+    "deploy",
+    "checks",
+    "paths",
+)
 
 # Defaults are the 0.2.x paths: a project without a `paths:` block keeps the
 # exact same artifacts and directories.
@@ -182,11 +197,18 @@ def load_config(root: Path) -> ProjectConfig:
     if not isinstance(data, dict):
         raise ConfigError("galadon.yaml must contain a mapping")
 
+    unknown = sorted({str(key) for key in data} - set(TOP_LEVEL_KEYS))
+    if unknown:
+        raise ConfigError(
+            f"galadon.yaml: unknown top-level keys: {', '.join(unknown)} "
+            f"(allowed: {', '.join(TOP_LEVEL_KEYS)})"
+        )
+
     name = str(data.get("project", "")).strip()
     if not name:
         raise ConfigError("galadon.yaml: project is required")
     template = str(data.get("template", "")).strip()
-    if template not in {"web", "api", "static"}:
+    if template not in TEMPLATES:
         raise ConfigError("galadon.yaml: template must be web, api or static")
     role = str(data.get("role", "solo")).strip()
     if role not in {"solo", "six-ring", "orchestrator"}:

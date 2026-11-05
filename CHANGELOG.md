@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.1
+
+- `galadon.yaml` rejects unknown top-level keys instead of ignoring them. The
+  shipped schema already declared `additionalProperties: false`, so a block that
+  had stopped meaning anything — the retired 0.1.0 `tools:` port — could sit in
+  a real config doing nothing. The error names every unknown key and the allowed
+  set.
+- The documented `check` behaviour with the default `none` layout now matches
+  the code: the first failure is the spec gate ("spec/spec.md still contains
+  TODO"), and "no checks configured" only appears once the spec is complete.
+  `README.md`, `README_CN.md` and `galadon init --list-layouts` had the checks
+  failure first.
+- Tests: a standing matrix covers all 36 layout × stack × template
+  combinations, asserting each one is either green on a fresh scaffold or fails
+  loudly with the reason it is expected to produce. `examples/minimal` — shipped
+  in the npm tarball and previously covered by nothing — must pass `galadon
+  check` from a scratch copy.
+
 ## 0.3.0
 
 - `galadon init --layout {none,webapp,service,plugin}` (default `none`) and

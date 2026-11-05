@@ -53,10 +53,12 @@ galadon next                              # one phase, one next action
 
 Then let the agent drive: it reads `galadon.yaml`, does the current phase, and
 runs `galadon check` until the loop reaches `learn`. With the default `none`
-layout, `init` leaves `checks.build` and `checks.test` empty on purpose: `check`
-fails loudly with "no checks configured — declare checks.build/checks.test"
-until you declare the real commands. A non-`none` layout ships real checks
-instead (see Layouts below).
+layout the first gate is the spec: `init` writes a `spec/spec.md` stub full of
+TODO, so `check` fails with "spec/spec.md still contains TODO" until you write
+it. `init` also leaves `checks.build` and `checks.test` empty on purpose, so
+once the spec is done `check` fails loudly with "no checks configured — declare
+checks.build/checks.test" until you declare the real commands. A non-`none`
+layout ships a filled-in spec and real checks instead (see Layouts below).
 
 ## Layouts
 

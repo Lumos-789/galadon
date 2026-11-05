@@ -149,7 +149,8 @@ def layout_listing() -> str:
         build, test = STACK_CHECKS[stack]
         if stack == "none":
             lines.append(
-                f'  none     no checks: galadon check fails with "{MISSING_CHECKS}"'
+                f'  none     no checks: galadon check fails with "{MISSING_CHECKS}" '
+                "once the spec is complete"
             )
             continue
         display = (

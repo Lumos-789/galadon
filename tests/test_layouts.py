@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from galadon.cli import main  # noqa: E402
+from galadon.config import LAYOUTS, STACKS, TEMPLATES  # noqa: E402
 from galadon.templates import FileTemplateProvider  # noqa: E402
 
 AGENT_SLOTS = ("plans", "evidence", "archive", "skills", "tmp", "wiki")
@@ -37,7 +38,7 @@ layouts (galadon init --layout):
 stacks (galadon init --stack):
   python   build: python3 -m compileall -f -q <layout sources> && <layout shell checks> | test: python3 -m unittest discover -s tests -v
   node     build: node --check <entry> && <layout shell checks> | test: npm test (package.json scripts.test = node --test tests/)
-  none     no checks: galadon check fails with "no checks configured — declare checks.build/checks.test"
+  none     no checks: galadon check fails with "no checks configured — declare checks.build/checks.test" once the spec is complete
 """
 
 
@@ -704,6 +705,105 @@ class CompatibilityAndGateTests(unittest.TestCase):
         )
         self.assertEqual(code, 2)
         self.assertIn("path separator", err)
+
+
+class LayoutMatrixTests(unittest.TestCase):
+    """Every layout × stack × template combination either ships a gate that is
+    green on a fresh scaffold, or fails loudly with the reason that combination
+    is expected to produce. A combination that silently produces a broken
+    project fails here."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="galadon-matrix-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_every_combination_is_green_or_fails_by_design(self) -> None:
+        for layout in LAYOUTS:
+            for stack in STACKS:
+                for template in TEMPLATES:
+                    key = f"{layout}/{stack}/{template}"
+                    with self.subTest(combination=key):
+                        project = self.tmp / f"{layout}-{stack}-{template}"
+                        code, out, err = run(
+                            "init",
+                            "--path",
+                            str(project),
+                            "--name",
+                            "demo",
+                            "--layout",
+                            layout,
+                            "--stack",
+                            stack,
+                            "--template",
+                            template,
+                        )
+                        self.assertEqual(code, 0, f"{key}: init failed\n{out}{err}")
+
+                        code, out, err = run("check", "--path", str(project), "--json")
+                        report = json.loads(out)
+                        failed = {
+                            result["id"]: result
+                            for result in report["results"]
+                            if result["code"] != 0
+                        }
+
+                        if layout != "none" and stack != "none":
+                            self.assertEqual(code, 0, f"{key}: expected green\n{out}{err}")
+                            self.assertTrue(report["ok"], key)
+                            self.assertEqual(failed, {}, key)
+                            continue
+
+                        self.assertEqual(
+                            code, 1, f"{key}: expected a loud failure\n{out}{err}"
+                        )
+                        self.assertFalse(report["ok"], key)
+
+                        if layout == "none":
+                            # The base stub is full of TODO, so a fresh `none`
+                            # project stops at the spec gate first.
+                            self.assertEqual(sorted(failed), ["spec"], key)
+                            self.assertIn("TODO", failed["spec"]["stdout"], key)
+                        else:
+                            # A real layout with --stack none ships a filled-in
+                            # spec and stops at the layout contract, which names
+                            # the missing checks.
+                            self.assertEqual(sorted(failed), ["layout"], key)
+                            self.assertIn(
+                                "no checks configured", failed["layout"]["stdout"], key
+                            )
+
+
+class BundledExampleTests(unittest.TestCase):
+    """`examples/minimal` ships inside the npm tarball, so it has to keep
+    working; nothing else in the suite would notice it rotting."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="galadon-example-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_bundled_example_passes_check(self) -> None:
+        # `check` writes .galadon/ and verify/; copy to a scratch directory so
+        # the shipped example stays free of generated artifacts.
+        project = self.tmp / "minimal"
+        shutil.copytree(
+            ROOT / "examples" / "minimal",
+            project,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".galadon", "verify"),
+        )
+        code, out, err = run("check", "--path", str(project), "--json")
+        report = json.loads(out)
+        self.assertEqual(code, 0, out + err)
+        self.assertTrue(report["ok"])
+        self.assertEqual(
+            [result["id"] for result in report["results"]],
+            ["spec", "build", "test"],
+        )
+
+    def test_shipped_example_carries_no_generated_artifacts(self) -> None:
+        self.assertFalse(
+            (ROOT / "examples" / "minimal" / "verify").exists(),
+            "examples/minimal/verify is generated by `galadon check`; run it in a copy",
+        )
 
 
 if __name__ == "__main__":

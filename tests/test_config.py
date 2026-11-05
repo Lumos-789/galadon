@@ -68,6 +68,28 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.deploy.options["host"], "203.0.113.10")
         self.assertEqual(config.deploy.options["nested"], {"keep": [1, 2]})
 
+    def test_unknown_top_level_keys_fail_loud(self) -> None:
+        # `tools:` was the 0.1.0 ToolPort block. The port is gone, and the
+        # shipped schema already says additionalProperties: false, so a leftover
+        # block must be reported instead of silently ignored.
+        data = json.loads(json.dumps(BASE))
+        data["tools"] = {"issue": "local-md", "ci": "none"}
+        with self.assertRaises(ConfigError) as caught:
+            load_config(self.write(data))
+        message = str(caught.exception)
+        self.assertIn("unknown top-level keys: tools", message)
+        self.assertIn("allowed:", message)
+        for allowed in ("project", "deploy", "checks", "paths"):
+            self.assertIn(allowed, message)
+
+    def test_unknown_top_level_keys_are_listed_sorted(self) -> None:
+        data = json.loads(json.dumps(BASE))
+        data["zeta"] = 1
+        data["alpha"] = {"nested": True}
+        with self.assertRaises(ConfigError) as caught:
+            load_config(self.write(data))
+        self.assertIn("unknown top-level keys: alpha, zeta", str(caught.exception))
+
     def test_explicit_options_are_preserved(self) -> None:
         data = json.loads(json.dumps(BASE))
         data["deploy"]["options"] = {"custom": {"flag": True}}

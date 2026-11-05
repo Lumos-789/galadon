@@ -49,10 +49,12 @@ galadon next                              # 当前阶段 + 一个下一步
 ```
 
 之后交给 agent：它读 `galadon.yaml`，只做当前阶段，跑 `galadon check`，
-直到循环走到 `learn`。默认 `none` 版式下，`init` 故意把 `checks.build` 与
-`checks.test` 留空：在声明真实命令之前，`check` 会响亮失败并提示
-"no checks configured — declare checks.build/checks.test"；非 `none` 版式则直接
-带上真实检查命令（见下文）。
+直到循环走到 `learn`。默认 `none` 版式下，第一道门是 spec：`init` 写入的
+`spec/spec.md` 是 TODO 存根，所以在写完它之前 `check` 报
+"spec/spec.md still contains TODO"。`init` 同时故意把 `checks.build` 与
+`checks.test` 留空，所以 spec 写完后 `check` 会响亮失败并提示
+"no checks configured — declare checks.build/checks.test"，直到声明真实命令；
+非 `none` 版式则自带填好的 spec 与真实检查命令（见下文）。
 
 ## 版式（Layouts）
 
