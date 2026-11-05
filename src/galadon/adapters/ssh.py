@@ -4,8 +4,7 @@ import json
 import re
 import shlex
 import subprocess
-import urllib.error
-import urllib.request
+import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
@@ -13,7 +12,7 @@ from typing import Any, Callable
 from ..config import render_probe_expect
 from ..ports import Artifact, DeployContext, ProbeResult, Release
 from ..util import digest_path, git_commit, now_iso
-from .probe import extract_commit
+from .probe import READY_SECONDS, ProbeNotReady, extract_commit, fetch
 from .release import (
     ROOT_MARKER,
     DeployError,
@@ -98,10 +97,14 @@ class SshSystemdAdapter:
         runner: Runner | None = None,
         clock: Clock | None = None,
         commit_provider: CommitProvider | None = None,
+        sleep: Callable[[float], None] | None = None,
+        probe_ready: float = READY_SECONDS,
     ) -> None:
         self._runner = runner or subprocess_runner
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._commit_provider = commit_provider or git_commit
+        self._sleep = sleep or time.sleep
+        self._probe_ready = probe_ready
 
     def _option(self, ctx: DeployContext, key: str) -> str:
         value = ctx.config.deploy.options.get(key)
@@ -333,11 +336,11 @@ printf 'GALADON_OK=1\\n'
                 "deploy.probe_url is required; Galadon refuses to report success without a probe"
             )
         try:
-            with urllib.request.urlopen(url, timeout=15) as response:
-                status = response.getcode()
-                body = response.read(256_000).decode(errors="replace")
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-            raise DeployError(f"probe request failed: {type(exc).__name__}: {exc}") from exc
+            status, body = fetch(
+                url, ready_seconds=self._probe_ready, sleep=self._sleep
+            )
+        except ProbeNotReady as exc:
+            raise DeployError(f"probe request failed: {exc}") from exc.last
         if status != 200:
             raise DeployError(f"probe returned HTTP {status}")
         try:

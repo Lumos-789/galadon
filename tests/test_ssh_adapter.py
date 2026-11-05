@@ -176,6 +176,82 @@ class SshAdapterTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    def test_probe_waits_out_a_just_restarted_service(self) -> None:
+        self.write_config()
+        data = yaml.safe_load(self.config_path.read_text(encoding="utf-8"))
+        data["deploy"]["probe_url"] = "http://127.0.0.1:1/health.json"
+        self.config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        config = load_config(self.project)
+        ctx = DeployContext(root=self.project, config=config, env="test")
+        artifact = Artifact(path=self.project / "dist", digest="digest")
+        release = Release(
+            env="test", artifact=artifact, adapter="ssh", metadata={"commit": "abc1234"}
+        )
+        adapter = SshSystemdAdapter(
+            runner=self.runner,
+            clock=lambda: datetime(2026, 11, 4, 17, 30, tzinfo=timezone.utc),
+            commit_provider=lambda _root: "abc1234",
+            sleep=lambda _seconds: None,
+            probe_ready=2.0,
+        )
+        attempts = {"n": 0}
+
+        def fake_urlopen(url: str, timeout: float | None = None) -> object:
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise ConnectionResetError(54, "Connection reset by peer")
+
+            class Response:
+                def getcode(self) -> int:
+                    return 200
+
+                def read(self, _size: int = -1) -> bytes:
+                    return b'{"commit":"abc1234"}'
+
+                def __enter__(self) -> "Response":
+                    return self
+
+                def __exit__(self, *_exc: object) -> bool:
+                    return False
+
+            return Response()
+
+        with mock.patch("galadon.adapters.probe.urllib.request.urlopen", fake_urlopen):
+            probe = adapter.probe(ctx, release)
+
+        self.assertTrue(probe.ok)
+        self.assertEqual(probe.actual, "abc1234")
+        self.assertEqual(attempts["n"], 2)
+
+    def test_probe_still_fails_loudly_when_the_window_expires(self) -> None:
+        self.write_config()
+        data = yaml.safe_load(self.config_path.read_text(encoding="utf-8"))
+        data["deploy"]["probe_url"] = "http://127.0.0.1:1/health.json"
+        self.config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        config = load_config(self.project)
+        ctx = DeployContext(root=self.project, config=config, env="test")
+        adapter = SshSystemdAdapter(
+            runner=self.runner,
+            clock=lambda: datetime(2026, 11, 4, 17, 30, tzinfo=timezone.utc),
+            commit_provider=lambda _root: "abc1234",
+            sleep=lambda _seconds: None,
+            probe_ready=0.0,
+        )
+        artifact = Artifact(path=self.project / "dist", digest="digest")
+        release = Release(
+            env="test", artifact=artifact, adapter="ssh", metadata={"commit": "abc1234"}
+        )
+
+        with mock.patch(
+            "galadon.adapters.probe.urllib.request.urlopen",
+            side_effect=ConnectionResetError(54, "Connection reset by peer"),
+        ):
+            with self.assertRaises(DeployError) as caught:
+                adapter.probe(ctx, release)
+
+        self.assertIn("probe request failed", str(caught.exception))
+        self.assertIn("no answer within", str(caught.exception))
+
     def test_rollback_switches_previous_and_reprobes(self) -> None:
         self.runner.ssh_output = (
             "GALADON_ROLLBACK_TO=/srv/demo/releases/20261104-160000-prev123\n"

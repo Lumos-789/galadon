@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.3
+
+- The deploy probe now waits for a service that was just restarted.
+  `systemctl restart` returns once the process is spawned, not once it is
+  listening: measured on a real host, the port refused connections for ~150 ms
+  afterwards. The probe fired immediately and failed, so every shipment of a
+  real project failed its probe and rolled back (2 out of 2 on the host used for
+  the relay dogfood). Connection-level failures are now retried inside a bounded
+  readiness window (15s); an HTTP answer is final and immediately subject to the
+  commit check, and a target that never answers still fails loudly, naming the
+  attempt count and the budget. The same zero tolerance made a rollback that had
+  actually restored service report itself as failed, because the post-rollback
+  re-check used the same probe.
+- The probe fetch moved into `adapters/probe.py`, so the `local` and `ssh`
+  adapters share one readiness policy instead of carrying a copy each.
+
 ## 0.3.2
 
 - `pytest` no longer walks into `examples/`. Running it from the repo root used

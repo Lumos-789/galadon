@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
-import urllib.error
-import urllib.request
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -11,7 +10,7 @@ from typing import Any, Callable
 from ..config import render_probe_expect
 from ..ports import Artifact, DeployContext, ProbeResult, Release
 from ..util import digest_path, git_commit, now_iso, run_shell
-from .probe import extract_commit
+from .probe import READY_SECONDS, ProbeNotReady, extract_commit, fetch
 from .release import (
     DeployError,
     ReleaseLayout,
@@ -33,9 +32,13 @@ class LocalCommandAdapter:
         self,
         clock: Clock | None = None,
         commit_provider: CommitProvider | None = None,
+        sleep: Callable[[float], None] | None = None,
+        probe_ready: float = READY_SECONDS,
     ) -> None:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._commit_provider = commit_provider or git_commit
+        self._sleep = sleep or time.sleep
+        self._probe_ready = probe_ready
 
     def describe(self, ctx: DeployContext) -> str:
         return f"local workspace {ctx.root}"
@@ -144,15 +147,11 @@ class LocalCommandAdapter:
                 "deploy.probe_url is required; Galadon refuses to report success without a probe"
             )
         try:
-            with urllib.request.urlopen(url, timeout=15) as response:
-                status = response.getcode()
-                body = response.read(256_000).decode(errors="replace")
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-            return ProbeResult(
-                ok=False,
-                detail=f"{type(exc).__name__}: {exc}",
-                url=url,
+            status, body = fetch(
+                url, ready_seconds=self._probe_ready, sleep=self._sleep
             )
+        except ProbeNotReady as exc:
+            return ProbeResult(ok=False, detail=str(exc), url=url)
         if status != 200:
             return ProbeResult(ok=False, detail=f"HTTP {status}", url=url)
         body = body.strip()
