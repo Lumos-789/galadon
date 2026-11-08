@@ -5,8 +5,6 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable
 
-COMMIT_FIELDS = ("commit",)
-
 READY_SECONDS = 15.0
 RETRY_INTERVAL = 0.25
 _MAX_BODY = 256_000
@@ -57,8 +55,7 @@ def fetch(
 
 def extract_commit(payload: dict[str, Any]) -> str | None:
     """Return the version field a probe response exposes, if any."""
-    for field in COMMIT_FIELDS:
-        if field in payload:
-            value = payload[field]
-            return "" if value is None else str(value).strip()
-    return None
+    if "commit" not in payload:
+        return None
+    value = payload["commit"]
+    return "" if value is None else str(value).strip()

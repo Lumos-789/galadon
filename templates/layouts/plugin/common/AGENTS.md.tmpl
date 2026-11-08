@@ -26,8 +26,8 @@ top and open only what the current phase needs.
 ## Knowledge ownership
 
 Project knowledge lives in `docs/` and `wiki/`; agent runtime state lives in
-`.agents/` and is never committed; reusable cross-project knowledge lives in the
-Guster hub `knowledge/` — never keep a second copy here.
+`.agents/` and is never committed; reusable cross-project knowledge lives in a
+knowledge hub outside the repo — never keep a second copy here.
 
 ## Current iteration
 
@@ -60,6 +60,7 @@ Guster hub `knowledge/` — never keep a second copy here.
 ## Commands
 
 ```bash
+# python/node stacks only
 scripts/dev.sh ping --json
 galadon next
 galadon check

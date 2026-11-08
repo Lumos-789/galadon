@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.4
+
+- Scaffold docs no longer point at things the scaffold does not generate. The
+  layout `AGENTS.md` templates sent reusable cross-project knowledge to "the
+  Guster hub" — a plugin the generated project does not have; the sentence now
+  names a knowledge hub outside the repo generically. The base `deploy/README`
+  told readers to implement `DeployPort` to connect SSH, but the `ssh` adapter
+  is built in (`deploy.adapter: ssh` in `galadon.yaml`); only Kubernetes still
+  needs a new adapter. READMEs, config notes, the plugin `AGENTS.md` and the
+  service spec acceptance item now say `scripts/dev.sh` is added by the
+  python/node stack layer, so a `--stack none` project no longer lists a
+  first command whose file was never generated.
+- The shipped schema's `required` matches the loader: only `project` and
+  `template` are mandatory, and `deploy` no longer marks `adapter`/`env`.
+  `load_config` defaults `role` to `solo` and fills `deploy`/`checks` when the
+  blocks are absent, so the old list made the schema reject `galadon.yaml`
+  files the tool itself accepts.
+- `.npmignore` is removed: `files` in `package.json` is an allowlist that
+  overrides it, so no line in it could affect the tarball; the bytecode defence
+  is the `prepack` script.
+- `RolePolicy.assign(phase)` drops its unused `task` argument (no
+  implementation read it and the only caller passed an empty string), and
+  `extract_commit` reads the single `commit` field directly instead of looping
+  over a one-element tuple.
+- The bundled example's health test no longer writes a `commit.txt` into a
+  temporary directory that nothing reads.
+
 ## 0.3.3
 
 - The deploy probe now waits for a service that was just restarted.

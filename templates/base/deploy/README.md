@@ -7,5 +7,6 @@ migrate and release commands, then requires a real `probe_url`. Releases live in
 retained `previous` and a `shared/deploy.lock`. A failed probe restores
 `previous` and re-probes it.
 
-To connect SSH or Kubernetes, implement `DeployPort` and register a new adapter.
-Do not fake success by removing the probe.
+The `ssh` adapter is built in: set `deploy.adapter: ssh` in `galadon.yaml`. To
+connect Kubernetes, implement `DeployPort` and register a new adapter. Do not
+fake success by removing the probe.

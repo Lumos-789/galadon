@@ -99,7 +99,7 @@ def infer_phase(root: Path, config: ProjectConfig) -> str:
 
 
 def role_hint(phase: str, config: ProjectConfig) -> str:
-    return " + ".join(role_policy_for(config.role).assign(phase, ""))
+    return " + ".join(role_policy_for(config.role).assign(phase))
 
 
 def next_payload(root: Path, config: ProjectConfig) -> dict[str, Any]:

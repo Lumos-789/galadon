@@ -4,7 +4,7 @@ from .ports import Phase
 
 
 class SoloPolicy:
-    def assign(self, phase: Phase, task: str) -> list[str]:
+    def assign(self, phase: Phase) -> list[str]:
         return ["agent"]
 
 
@@ -18,7 +18,7 @@ class SixRingPolicy:
         "done": ["agent"],
     }
 
-    def assign(self, phase: Phase, task: str) -> list[str]:
+    def assign(self, phase: Phase) -> list[str]:
         return list(self._mapping.get(phase, ["agent"]))
 
 
@@ -32,7 +32,7 @@ class OrchestratorPolicy:
         "done": ["orchestrator"],
     }
 
-    def assign(self, phase: Phase, task: str) -> list[str]:
+    def assign(self, phase: Phase) -> list[str]:
         return list(self._mapping.get(phase, ["orchestrator"]))
 
 

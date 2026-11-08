@@ -32,12 +32,12 @@ openspec/               construction tickets
 spec/                   product behaviour facts
 wiki/                   knowledge / progress / runbook
 .agents/                agent runtime, gitignored
-scripts/dev.sh          run the CLI from a checkout
+scripts/dev.sh          run the CLI from a checkout (python/node stacks)
 ```
 
 With the `python` or `node` stack, `galadon.yaml` already declares real checks,
 so `galadon check` is green on a fresh clone; `--stack none` ships no checks and
-fails the gate.
+no `scripts/dev.sh`, and fails the gate.
 
 ## Commands
 

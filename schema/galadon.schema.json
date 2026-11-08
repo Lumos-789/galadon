@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Galadon project configuration",
   "type": "object",
-  "required": ["project", "template", "role", "deploy", "checks"],
+  "required": ["project", "template"],
   "properties": {
     "project": {
       "type": "string",
@@ -46,7 +46,6 @@
     },
     "deploy": {
       "type": "object",
-      "required": ["adapter", "env"],
       "additionalProperties": true,
       "properties": {
         "adapter": {

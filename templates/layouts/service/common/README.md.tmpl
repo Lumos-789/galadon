@@ -24,15 +24,15 @@ openspec/          construction tickets
 spec/              product behaviour facts
 wiki/              knowledge / progress / runbook
 .agents/           agent runtime, gitignored
-scripts/dev.sh     run the service locally
+scripts/dev.sh     run the service locally (python/node stacks)
 config.md          environment and configuration notes
 deploy/            deploy notes for the adapter in galadon.yaml
 ```
 
 With the `python` or `node` stack, `galadon.yaml` already declares real checks,
 so `galadon check` is green on a fresh clone; `--stack none` ships no checks and
-fails the gate. Secrets belong in `.env` or the secret provider you configure,
-never in the YAML file.
+no `scripts/dev.sh`, and fails the gate. Secrets belong in `.env` or the secret
+provider you configure, never in the YAML file.
 
 ## Commands
 
