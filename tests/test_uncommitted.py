@@ -79,6 +79,19 @@ class UncommittedPathsTests(unittest.TestCase):
         (self.project / "src" / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
         self.assertEqual(uncommitted_paths(self.project, self.config), ["src/app.py"])
 
+    def test_an_untracked_source_file_blocks_the_ship(self) -> None:
+        (self.project / "src" / "new_module.py").write_text("VALUE = 4\n", encoding="utf-8")
+        self.assertEqual(uncommitted_paths(self.project, self.config), ["src/new_module.py"])
+
+    def test_untracked_files_the_loop_owns_do_not_block(self) -> None:
+        checks = self.project / ".galadon" / "checks.json"
+        checks.parent.mkdir(parents=True, exist_ok=True)
+        checks.write_text("{}\n", encoding="utf-8")
+        release = self.project / self.config.paths.release
+        release.parent.mkdir(parents=True, exist_ok=True)
+        release.write_text("{}\n", encoding="utf-8")
+        self.assertEqual(uncommitted_paths(self.project, self.config), [])
+
     def test_the_loops_own_files_are_not_blocking(self) -> None:
         (self.project / "verify" / "evidence.md").write_text("new\n", encoding="utf-8")
         (self.project / "AGENTS.md").write_text("# agents\n\n- phase: ship\n", encoding="utf-8")

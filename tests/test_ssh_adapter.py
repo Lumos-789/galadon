@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import shlex
@@ -8,6 +9,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -427,11 +429,27 @@ class SshAdapterTests(unittest.TestCase):
 
     def test_preflight_detects_systemd_unit_drift(self) -> None:
         self.runner.ssh_output = "GALADON_OK=1\n"
-        self.adapter.preflight(self.ctx)
+        result = self.adapter.preflight(self.ctx)
         script = self.runner.calls[0]["input"]
         self.assertIn("systemd unit drift detected", script)
         self.assertIn("ExecStart=/usr/bin/python3 /srv/demo/current/server.py", script)
         self.assertIn("galadon bootstrap --env", script)
+        self.assertEqual(result["notes"], [])
+
+    def test_preflight_names_the_skip_when_bootstrap_options_are_missing(self) -> None:
+        self.write_config(domain="", listen="", exec_start="", caddy_block="")
+        self.ctx = DeployContext(
+            root=self.project, config=load_config(self.project), env="test"
+        )
+        self.runner.ssh_output = "GALADON_OK=1\n"
+        result = self.adapter.preflight(self.ctx)
+        script = self.runner.calls[0]["input"]
+        self.assertNotIn("unit drift detected", script)
+        self.assertEqual(len(result["notes"]), 1)
+        self.assertIn(
+            "skipping unit drift check: unit template incomplete", result["notes"][0]
+        )
+        self.assertIn("domain, listen, exec_start, caddy_block", result["notes"][0])
 
     def test_bootstrap_refuses_a_non_empty_root_it_does_not_own(self) -> None:
         self.runner.ssh_output = "GALADON_OK=1\n"
@@ -486,7 +504,10 @@ class FakeShipAdapter:
 
     def preflight(self, ctx) -> dict:
         self.events.append("preflight")
-        return {"target": "root@example", "remote_root": "/srv/demo", "service": "demo"}
+        result = {"target": "root@example", "remote_root": "/srv/demo", "service": "demo"}
+        if getattr(self, "preflight_notes", None):
+            result["notes"] = self.preflight_notes
+        return result
 
     def build(self, ctx) -> Artifact:
         self.events.append("build")
@@ -581,6 +602,24 @@ class ShipRollbackTests(unittest.TestCase):
         self.assertEqual(record["actual_commit"], "good123")
         self.assertTrue(record["rollback"]["ok"])
         self.assertEqual(record["rollback"]["version"], "good123")
+
+    def test_ship_prints_preflight_notes(self) -> None:
+        from galadon.cli import main
+
+        adapter = FakeShipAdapter()
+        adapter.preflight_notes = [
+            "skipping unit drift check: unit template incomplete "
+            "(missing bootstrap keys: domain, listen)"
+        ]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch("galadon.cli.adapter_for", return_value=adapter):
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(["ship", "--path", str(self.project), "--env", "test"])
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "galadon: skipping unit drift check: unit template incomplete",
+            err.getvalue(),
+        )
 
 
 if __name__ == "__main__":

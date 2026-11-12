@@ -61,10 +61,12 @@ def git_commit(root: Path) -> str | None:
 
 
 def git_dirty_paths(root: Path) -> list[str] | None:
-    """Tracked paths with uncommitted changes, or None when git cannot answer."""
+    """Paths with uncommitted changes, untracked files included, or None when
+    git cannot answer. The ship guard copies the whole workspace, so an
+    untracked file rides along exactly like an uncommitted edit."""
     try:
         proc = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"],
             capture_output=True,
             text=True,
             check=False,

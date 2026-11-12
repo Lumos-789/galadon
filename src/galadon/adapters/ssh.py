@@ -203,10 +203,16 @@ class SshSystemdAdapter:
         root = self._root(ctx)
         service = self._service(ctx)
         drift_check = ""
+        notes: list[str] = []
         try:
             unit = self._unit_text(ctx)
-        except DeployError:
+        except DeployError as exc:
             unit = ""
+            missing = self._missing_bootstrap_keys(ctx)
+            reason = f"missing bootstrap keys: {', '.join(missing)}" if missing else str(exc)
+            notes.append(
+                f"skipping unit drift check: unit template incomplete ({reason})"
+            )
         if unit:
             unit_path = f"/etc/systemd/system/{service}.service"
             drift_check = (
@@ -234,7 +240,12 @@ systemctl cat "$service" >/dev/null 2>&1 || {{ echo "galadon: systemd service is
 {drift_check}printf 'GALADON_OK=1\\n'
 """
         self._remote(ctx, script, "preflight")
-        return {"target": self._target(ctx), "remote_root": root, "service": service}
+        return {
+            "target": self._target(ctx),
+            "remote_root": root,
+            "service": service,
+            "notes": notes,
+        }
 
     def build(self, ctx: DeployContext) -> Artifact:
         self._local_command(ctx, ctx.config.deploy.build, "build")
@@ -429,6 +440,13 @@ printf 'GALADON_OK=1\\n'
     def describe(self, ctx: DeployContext) -> str:
         return f"{self._target(ctx)}:{self._root(ctx)}"
 
+    def _missing_bootstrap_keys(self, ctx: DeployContext) -> list[str]:
+        return [
+            key
+            for key in ("domain", "listen", "exec_start", "caddy_block")
+            if not self._option(ctx, key)
+        ]
+
     def _bootstrap_values(self, ctx: DeployContext) -> tuple[str, str, str]:
         values = {
             "domain": self._option(ctx, "domain"),
@@ -436,7 +454,7 @@ printf 'GALADON_OK=1\\n'
             "exec_start": self._option(ctx, "exec_start"),
             "caddy_block": self._option(ctx, "caddy_block"),
         }
-        missing = [key for key, value in values.items() if not value]
+        missing = self._missing_bootstrap_keys(ctx)
         if missing:
             raise DeployError(
                 "bootstrap requires deploy.options domain, listen, exec_start, caddy_block; "

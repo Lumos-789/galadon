@@ -211,6 +211,15 @@ class LocalCommandAdapter:
             )
         return self._probe(ctx, expect, check_expect=True)
 
+    def _rollback_expected(self, ctx: DeployContext, version: str) -> str:
+        # A static probe_expect is a marker both releases emit, so the re-probe
+        # asserts what the release gate asserted; only a {{COMMIT}} template
+        # ties the probe body to the rolled-back version.
+        expect = ctx.config.deploy.probe_expect.strip()
+        if expect and "{{COMMIT}}" not in expect:
+            return expect
+        return version
+
     def rollback(self, ctx: DeployContext, release: Release) -> None:
         layout = self._layout(ctx)
         with deploy_lock(layout):
@@ -223,7 +232,7 @@ class LocalCommandAdapter:
                 "ok": False,
             }
         try:
-            probe = self._probe(ctx, version, check_expect=False)
+            probe = self._probe(ctx, self._rollback_expected(ctx, version), check_expect=False)
         except DeployError as exc:
             raise DeployError(
                 f"rolled back to {version} at {target}, but the re-probe failed: {exc}"

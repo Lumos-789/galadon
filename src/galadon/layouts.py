@@ -156,10 +156,16 @@ def layout_listing() -> str:
         display = (
             build.replace("{roots}", "<layout sources>")
             .replace("{entry}", "<entry>")
-            .replace("{shell}", " && <layout shell checks>")
+            .replace("{shell}", "")
         )
         note = " (package.json scripts.test = node --test tests/)" if stack == "node" else ""
         lines.append(f"  {stack:<8} build: {display} | test: {test}{note}")
+    for name in LAYOUTS:
+        for command in LAYOUT_SPECS[name].shell_checks:
+            lines.append("")
+            lines.append(
+                f"{name} appends to the build command: && {command.format(bin='<project>')}"
+            )
     return "\n".join(lines)
 
 

@@ -40,6 +40,32 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
+class CurrentReleaseHandler(BaseHTTPRequestHandler):
+    """Serves the marker inside the release `current` points at, like a real
+    service serving its own build marker."""
+
+    deploy_root = None
+
+    def do_GET(self) -> None:  # noqa: N802
+        marker = "(no release)"
+        if self.deploy_root is not None:
+            try:
+                marker = (
+                    self.deploy_root / "current" / "marker.txt"
+                ).read_text(encoding="utf-8").strip()
+            except OSError:
+                pass
+        body = json.dumps({"commit": marker}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args) -> None:
+        return
+
+
 class GaladonCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="galadon-test-"))
@@ -282,6 +308,54 @@ class GaladonCliTests(unittest.TestCase):
         self.assertTrue(release["rollback"]["ok"])
         self.assertEqual(release["rollback"]["version"], "good123")
         self.assertEqual(current.resolve(), first_target)
+
+    def test_local_ship_static_expect_rollback_reports_ok(self) -> None:
+        self.write_spec()
+        dist = self.project / "dist"
+        dist.mkdir()
+        (dist / "marker.txt").write_text("v9.9.9\n", encoding="utf-8")
+        data = self.config()
+        data["deploy"]["artifact"] = "dist"
+        self.set_config(data)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), CurrentReleaseHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            CurrentReleaseHandler.deploy_root = self.project / ".galadon" / "deploy"
+            self.probe_config(server, "v9.9.9")
+
+            code, out, err = run("ship", "--path", str(self.project), "--env", "test", "--json")
+            self.assertEqual(code, 0, out + err)
+
+            self.write_retro()
+            code, out, err = run("next", "--path", str(self.project), "--json")
+            self.assertEqual(json.loads(out)["phase"], "done", out + err)
+            code, out, err = run("new", "--path", str(self.project), "--json")
+            self.assertEqual(code, 0, out + err)
+            code, out, err = run("check", "--path", str(self.project), "--json")
+            self.assertEqual(code, 0, out + err)
+            (dist / "marker.txt").write_text("broken999\n", encoding="utf-8")
+
+            code, out, err = run("ship", "--path", str(self.project), "--env", "test", "--json")
+
+            self.assertEqual(code, 1, out + err)
+            self.assertIn("rolled back automatically", err)
+            release = self.release_record()
+            self.assertFalse(release["ok"])
+            self.assertTrue(release["rollback"]["ok"])
+            self.assertEqual(release["rollback"]["actual"], "v9.9.9")
+            self.assertEqual(release["actual_commit"], "v9.9.9")
+            marker = (
+                (self.project / ".galadon" / "deploy" / "current" / "marker.txt")
+                .read_text(encoding="utf-8")
+                .strip()
+            )
+            self.assertEqual(marker, "v9.9.9")
+        finally:
+            CurrentReleaseHandler.deploy_root = None
+            server.shutdown()
+            server.server_close()
 
     def test_actual_commit_comes_from_the_probe_not_build_metadata(self) -> None:
         from unittest import mock

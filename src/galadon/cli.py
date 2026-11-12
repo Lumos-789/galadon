@@ -189,13 +189,18 @@ def cmd_ship(args: argparse.Namespace) -> int:
     print(f"Galadon ship: {env} -> {adapter.describe(ctx)}", file=sys.stderr)
     preflight = getattr(adapter, "preflight", None)
     if preflight is not None:
-        preflight(ctx)
+        result = preflight(ctx) or {}
+        for note in result.get("notes") or []:
+            print(f"galadon: {note}", file=sys.stderr)
 
     artifact = adapter.build(ctx)
     commit = git_commit(root)
     ctx.commit = commit
     if "{{COMMIT}}" in config.deploy.probe_expect:
-        config.deploy.probe_expect = render_probe_expect(config.deploy.probe_expect, commit)
+        # Fail before building when the placeholder cannot render; adapters
+        # render it against their own release commit, so the config must keep
+        # the raw template for the rollback re-probe.
+        render_probe_expect(config.deploy.probe_expect, commit)
 
     adapter.migrate(ctx)
     release = adapter.release(ctx, artifact)

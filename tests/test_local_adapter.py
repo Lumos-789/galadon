@@ -118,6 +118,33 @@ class LocalAdapterTests(unittest.TestCase):
             Path(first.metadata["release_dir"]).resolve(),
         )
 
+    def test_rollback_recheck_honors_a_static_probe_expect(self) -> None:
+        self.write_config(probe_expect="v9.9.9")
+        self.ctx.config = load_config(self.project)
+        ProbeHandler.body = b'{"ok": true, "commit": "v9.9.9"}'
+        self.adapter.release(self.ctx, self.artifact())
+        self.ctx.commit = "bad999"
+        second = self.adapter.release(self.ctx, self.artifact())
+
+        self.adapter.rollback(self.ctx, second)
+
+        self.assertTrue(second.metadata["rollback"]["ok"])
+        self.assertEqual(second.metadata["rollback"]["actual"], "v9.9.9")
+
+    def test_rollback_recheck_with_commit_template_asserts_the_version(self) -> None:
+        self.write_config(probe_expect="{{COMMIT}}")
+        self.ctx.config = load_config(self.project)
+        self.adapter.release(self.ctx, self.artifact())
+        self.ctx.commit = "bad999"
+        second = self.adapter.release(self.ctx, self.artifact())
+
+        ProbeHandler.body = b'{"ok": true, "commit": "good123"}'
+        self.adapter.rollback(self.ctx, second)
+
+        self.assertTrue(second.metadata["rollback"]["ok"])
+        self.assertEqual(second.metadata["rollback"]["version"], "good123")
+        self.assertEqual(second.metadata["rollback"]["actual"], "good123")
+
     def test_release_refuses_while_another_deployment_holds_the_lock(self) -> None:
         lock_dir = self.deploy_root / "shared"
         lock_dir.mkdir(parents=True)

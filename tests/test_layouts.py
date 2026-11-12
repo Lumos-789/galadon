@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from galadon.cli import main  # noqa: E402
 from galadon.config import LAYOUTS, STACKS, TEMPLATES  # noqa: E402
+from galadon.layouts import LAYOUT_SPECS, checks_for, layout_listing  # noqa: E402
 from galadon.templates import FileTemplateProvider  # noqa: E402
 
 AGENT_SLOTS = ("plans", "evidence", "archive", "skills", "tmp", "wiki")
@@ -36,9 +37,11 @@ layouts (galadon init --layout):
   plugin   bin/<project> src/<project>/ skills/<project>/ docs/ tests/ scripts/ + openspec/ spec/ wiki/{knowledge,progress,runbook}/ .agents/
 
 stacks (galadon init --stack):
-  python   build: python3 -m compileall -f -q <layout sources> && <layout shell checks> | test: python3 -m unittest discover -s tests -v
-  node     build: node --check <entry> && <layout shell checks> | test: npm test (package.json scripts.test = node --test tests/)
+  python   build: python3 -m compileall -f -q <layout sources> | test: python3 -m unittest discover -s tests -v
+  node     build: node --check <entry> | test: npm test (package.json scripts.test = node --test tests/)
   none     no checks: galadon check fails with "no checks configured — declare checks.build/checks.test" once the spec is complete
+
+plugin appends to the build command: && bash -n bin/<project>
 """
 
 
@@ -665,6 +668,37 @@ class CompatibilityAndGateTests(unittest.TestCase):
         code, again, _ = run("init", "--list-layouts")
         self.assertEqual(code, 0)
         self.assertEqual(again, out)
+
+    def test_list_layouts_shows_the_exact_generated_check_commands(self) -> None:
+        listing = layout_listing()
+        self.assertNotIn("<layout shell checks>", listing)
+        build_lines = {}
+        for line in listing.splitlines():
+            for stack in ("python", "node"):
+                prefix = f"  {stack:<8} build: "
+                if line.startswith(prefix):
+                    build_lines[stack] = line[len(prefix):].split(" | test: ")[0]
+        appends = {
+            name: "".join(
+                f" && {command.format(bin='<project>')}" for command in spec.shell_checks
+            )
+            for name, spec in LAYOUT_SPECS.items()
+            if spec.shell_checks
+        }
+        self.assertIn("plugin appends to the build command: && bash -n bin/<project>", listing)
+
+        for layout in ("webapp", "service", "plugin"):
+            spec = LAYOUT_SPECS[layout]
+            for stack in ("python", "node"):
+                with self.subTest(layout=layout, stack=stack):
+                    generated = checks_for(layout, stack, "demo")[0]
+                    shown = (
+                        build_lines[stack]
+                        .replace("<layout sources>", " ".join(spec.python_roots))
+                        .replace("<entry>", spec.node_entry or "")
+                        + appends.get(layout, "")
+                    ).replace("bin/<project>", "bin/demo")
+                    self.assertEqual(shown, generated)
 
     def test_retro_path_comes_from_the_configured_paths(self) -> None:
         project = self.init("--layout", "webapp", "--stack", "python")

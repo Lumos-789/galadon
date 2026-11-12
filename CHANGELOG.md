@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.3.5
+
+- The ship dirty-tree guard now counts untracked files. `git status
+  --porcelain --untracked-files=no` let a brand-new file ride along silently:
+  the guard exists because the build copies the whole workspace, and `cp -r`
+  treats an untracked file exactly like an uncommitted edit, so an untracked
+  source file shipped under a commit it was never part of. The status call now
+  uses `--untracked-files=all`; the loop's own exemptions (evidence, release
+  record, `AGENTS.md`, `.galadon/`) already cover what `check`/`ship` generate
+  and the scaffold `.gitignore` keeps `out/`/`dist/` out of the report.
+- With a static `deploy.probe_expect`, the local adapter reported a successful
+  rollback as failed. The rollback re-probe asserted `body.commit == version`,
+  an invariant that only holds for the `{{COMMIT}}` template; a static expect
+  pins a marker both releases emit, so after switching back, the probe answered
+  the marker while the check demanded the previous release's version. The
+  re-probe now asserts the static expect when one is configured (the same thing
+  the release gate asserts) and the version only for `{{COMMIT}}`. To keep the
+  template visible at rollback time, `ship` no longer rewrites
+  `config.deploy.probe_expect` in place — it only fails early when the
+  placeholder cannot render; each adapter renders against its own release
+  commit.
+- The ssh preflight no longer drops the systemd unit drift check silently when
+  the bootstrap options are incomplete. Previously the whole drift block was
+  left out of the script without a word; preflight now records (and `ship`
+  prints) a note: `skipping unit drift check: unit template incomplete
+  (missing bootstrap keys: …)` naming the absent keys, so the degradation is
+  visible instead of implied.
+- `init --list-layouts` no longer claims every stack's build command ends in
+  `&& <layout shell checks>`. Only the plugin layout appends a shell check
+  (`bash -n bin/<project>`); webapp and service builds have no tail, so the
+  listing showed a suffix the generated `galadon.yaml` never contains. The
+  stack lines now match the generated commands for shell-check-free layouts,
+  and the plugin's exact append is stated on its own line.
+
 ## 0.3.4
 
 - Scaffold docs no longer point at things the scaffold does not generate. The
