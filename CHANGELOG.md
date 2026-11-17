@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.6
+
+- New icon: 1-bit monochrome pixel robot pushing a glowing block around a
+  five-segment track. Part of the shared pixel family across the six plugins;
+  no code changes.
+
 ## 0.3.5
 
 - The ship dirty-tree guard now counts untracked files. `git status
