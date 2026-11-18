@@ -153,6 +153,12 @@ class SshAdapterTests(unittest.TestCase):
         self.assertIn('mv -Tf "$root/.current.new" "$root/current"', finalize["input"])
         self.assertIn('mv -Tf "$root/.previous.new" "$root/previous"', finalize["input"])
 
+    def test_release_prefers_the_context_commit(self) -> None:
+        self.ctx.commit = "ctx5678"
+        release = self.adapter.release(self.ctx, self.adapter.build(self.ctx))
+        self.assertEqual(release.metadata["commit"], "ctx5678")
+        self.assertIn("ctx5678", release.metadata["release_dir"])
+
     def test_probe_requires_matching_json_commit(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), ProbeHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
