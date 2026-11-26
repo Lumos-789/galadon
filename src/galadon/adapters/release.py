@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import fcntl
 import os
+import re
+import shutil
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
+
+from ..config import DEFAULT_KEEP_RELEASES
 
 ROOT_MARKER = ".galadon-root"
 RELEASES_DIR = "releases"
@@ -14,6 +18,10 @@ SHARED_DIR = "shared"
 LOCK_RELATIVE = "shared/deploy.lock"
 CURRENT_LINK = "current"
 PREVIOUS_LINK = "previous"
+
+# A release directory galadon named itself: `<UTC stamp>-<version>`. Anything
+# else in `releases/` is not ours to delete.
+_RELEASE_NAME = re.compile(r"^\d{8}-\d{6}-\S+$")
 
 
 class DeployError(RuntimeError):
@@ -108,6 +116,42 @@ def retain_previous(layout: ReleaseLayout) -> Path | None:
     return old
 
 
+def keep_releases(options: dict) -> int:
+    """How many releases to keep besides the ones `current` and `previous`
+    point at. 0 keeps everything; the default keeps the disk from filling."""
+    return int(options.get("keep_releases", DEFAULT_KEEP_RELEASES))
+
+
+def prune_releases(layout: ReleaseLayout, keep: int, protect: Iterable[Path]) -> list[str]:
+    """Delete the oldest releases beyond `keep`, never the protected ones.
+
+    Names start with a UTC stamp, so sorting by name is sorting by time.
+    """
+    if keep <= 0 or not layout.releases.is_dir():
+        return []
+    protected: set[Path] = set()
+    for path in protect:
+        if path is None:
+            continue
+        try:
+            protected.add(path.resolve())
+        except OSError:
+            continue
+    releases = [
+        child
+        for child in layout.releases.iterdir()
+        if child.is_dir() and not child.is_symlink() and _RELEASE_NAME.match(child.name)
+    ]
+    pruned: list[str] = []
+    for path in sorted(releases, key=lambda child: child.name, reverse=True)[keep:]:
+        if path.resolve() in protected:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        if not path.exists():
+            pruned.append(path.name)
+    return pruned
+
+
 @contextmanager
 def deploy_lock(layout: ReleaseLayout) -> Iterator[None]:
     try:
@@ -162,3 +206,29 @@ def shell_switch_current(target: str, suffix: str) -> str:
         f'ln -sfn {target} "$root/.current.{suffix}"\n'
         f'mv -Tf "$root/.current.{suffix}" "$root/current"\n'
     )
+
+
+def shell_prune_releases() -> str:
+    """The shell twin of `prune_releases`, for the host the ssh adapter
+    releases onto. Only galadon-named directories are ever removed, a failed
+    removal is reported and otherwise ignored: by now the release is live and
+    nothing here may fail the ship."""
+    return """if [ "$keep_releases" -gt 0 ]; then
+  cur=""; prev=""
+  if [ -L "$root/current" ]; then cur=$(readlink -f "$root/current"); fi
+  if [ -L "$root/previous" ]; then prev=$(readlink -f "$root/previous"); fi
+  pruned=""
+  for name in $(ls -1 "$root/releases" | sort -r | tail -n +"$((keep_releases + 1))"); do
+    case "$name" in
+      [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]-*) ;;
+      *) continue ;;
+    esac
+    dir="$root/releases/$name"
+    [ -d "$dir" ] || continue
+    [ "$dir" = "$cur" ] && continue
+    [ "$dir" = "$prev" ] && continue
+    if rm -rf -- "$dir"; then pruned="$pruned $name"; else echo "galadon: could not remove old release $dir" >&2; fi
+  done
+  printf 'GALADON_PRUNED=%s\\n' "$pruned"
+fi
+"""

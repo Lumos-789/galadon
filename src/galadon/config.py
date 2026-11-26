@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -9,10 +11,12 @@ import yaml
 LAYOUTS = ("none", "webapp", "service", "plugin")
 STACKS = ("python", "node", "none")
 TEMPLATES = ("web", "api", "static")
+ROLES = ("solo", "six-ring", "orchestrator")
+ADAPTERS = ("local", "ssh", "k8s")
 
-# The shipped schema declares `additionalProperties: false` at the top level;
-# the loader accepted anything, so a block that stopped meaning something — the
-# retired `tools:` port — sat in real galadon.yaml files doing nothing.
+# The loader is the only description of galadon.yaml. A key it does not read is
+# rejected by name: the retired 0.1.0 `tools:` port sat in real config files for
+# months doing nothing because unknown keys used to be ignored.
 TOP_LEVEL_KEYS = (
     "project",
     "template",
@@ -22,6 +26,7 @@ TOP_LEVEL_KEYS = (
     "deploy",
     "checks",
     "paths",
+    "ports",
 )
 
 # Defaults are the 0.2.x paths: a project without a `paths:` block keeps the
@@ -33,7 +38,10 @@ DEFAULT_PATHS = {
     "release": "release/release.json",
 }
 
-_DEPLOY_FIELDS = {
+DEFAULT_PROBE_READY_SECONDS = 15.0
+DEFAULT_KEEP_RELEASES = 5
+
+_DEPLOY_FIELDS = (
     "adapter",
     "env",
     "build",
@@ -43,8 +51,23 @@ _DEPLOY_FIELDS = {
     "probe_expect",
     "artifact",
     "options",
-}
+)
+_ENV_FIELDS = (
+    "build",
+    "migrate",
+    "release",
+    "probe_url",
+    "probe_expect",
+    "artifact",
+    "options",
+    "protected",
+)
+_PORT_KEYS = ("role", "template", "deploy")
 _SSH_REQUIRED = ("host", "user", "remote_root", "service", "artifact")
+
+_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_REFERENCE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*$")
+_SAFE_ENVIRONMENT_FILE = re.compile(r"^/[A-Za-z0-9._/-]+$")
 
 
 class ConfigError(ValueError):
@@ -62,6 +85,8 @@ class DeployConfig:
     probe_expect: str = ""
     artifact: str = ""
     options: dict[str, Any] = field(default_factory=dict)
+    envs: tuple[str, ...] = ()
+    protected: bool = False
 
 
 @dataclass
@@ -80,6 +105,16 @@ class PathsConfig:
 
 
 @dataclass
+class PortsConfig:
+    """Project-side replacements for the three ports, each pointing at code or
+    templates inside the project."""
+
+    role: str = ""
+    template: str = ""
+    deploy: str = ""
+
+
+@dataclass
 class ProjectConfig:
     name: str
     template: str
@@ -89,6 +124,7 @@ class ProjectConfig:
     layout: str = "none"
     stack: str = "none"
     paths: PathsConfig = field(default_factory=PathsConfig)
+    ports: PortsConfig = field(default_factory=PortsConfig)
 
 
 def render_probe_expect(expect: str, commit: str | None) -> str:
@@ -99,7 +135,58 @@ def render_probe_expect(expect: str, commit: str | None) -> str:
     return expect.replace("{{COMMIT}}", commit)
 
 
-def _validate_ssh_options(options: dict[str, Any], artifact: str) -> None:
+def _mapping(value: Any, key: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError(f"galadon.yaml: {key} must be a mapping")
+    return dict(value)
+
+
+def _string(value: Any, where: str) -> str:
+    if not isinstance(value, str):
+        raise ConfigError(f"galadon.yaml: {where} must be a string")
+    return value
+
+
+def _blank_is_empty(value: Any, where: str) -> str:
+    """A key left empty (`build:` with nothing after it) means "not configured".
+    It used to be read as the string None and run as a command."""
+    return "" if value is None else _string(value, where)
+
+
+def _enum(value: Any, allowed: tuple[str, ...], message: str, empty: str = "") -> str:
+    """An enum-like key. Anything that is not one of the allowed values —
+    including a key left empty (`layout:` with nothing after it) — is reported
+    with `message`. An empty string means `empty`, when that means anything.
+    A caller passes the default for an absent key itself."""
+    text = value.strip() if isinstance(value, str) else ""
+    if text in allowed:
+        return text
+    if text == "" and value is not None and empty:
+        return empty
+    raise ConfigError(f"galadon.yaml: {message}")
+
+
+def _positive_number(value: Any, where: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ConfigError(f"galadon.yaml: {where} must be a number greater than 0 (got {value!r})")
+    return float(value)
+
+
+def _whole_number(value: Any, where: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ConfigError(f"galadon.yaml: {where} must be a whole number of 0 or more (got {value!r})")
+    return value
+
+
+def _boolean(value: Any, where: str) -> bool:
+    if not isinstance(value, bool):
+        raise ConfigError(f"galadon.yaml: {where} must be true or false (got {value!r})")
+    return value
+
+
+def _validate_ssh_options(options: dict[str, Any], artifact: str, where: str) -> None:
     values = {
         "host": options.get("host"),
         "user": options.get("user"),
@@ -114,8 +201,8 @@ def _validate_ssh_options(options: dict[str, Any], artifact: str) -> None:
     ]
     if missing:
         raise ConfigError(
-            "galadon.yaml: deploy.adapter ssh requires host, user, remote_root, "
-            f"service, artifact; missing: {', '.join(missing)}"
+            f"galadon.yaml: {where} uses adapter ssh and requires host, user, "
+            f"remote_root, service, artifact; missing: {', '.join(missing)}"
         )
 
     host = str(values["host"]).strip()
@@ -144,6 +231,150 @@ def _validate_ssh_options(options: dict[str, Any], artifact: str) -> None:
         raise ConfigError(
             "galadon.yaml: deploy.options.remote_root must be a specific directory below /"
         )
+
+
+def _validate_options(options: dict[str, Any], where: str) -> None:
+    if "probe_ready_seconds" in options:
+        _positive_number(options["probe_ready_seconds"], f"{where}.options.probe_ready_seconds")
+    if "keep_releases" in options:
+        _whole_number(options["keep_releases"], f"{where}.options.keep_releases")
+    if "search_index" in options:
+        _boolean(options["search_index"], f"{where}.options.search_index")
+    for key in ("environment_file", "remote_migrate"):
+        if options.get(key) is not None:
+            _string(options[key], f"{where}.options.{key}")
+    environment_file = options.get("environment_file")
+    if environment_file and not _SAFE_ENVIRONMENT_FILE.fullmatch(str(environment_file).strip()):
+        raise ConfigError(
+            "galadon.yaml: deploy.options.environment_file must be an absolute path on the host "
+            "made of letters, digits, dot, underscore, hyphen and slash"
+        )
+
+
+def _deploy_view(deploy_raw: dict[str, Any], override: dict[str, Any], name: str) -> dict[str, Any]:
+    """One environment's effective deploy settings: the shared block with the
+    environment's overrides on top. `options` merges key by key so an
+    environment can change only the host."""
+    merged = {**deploy_raw, **override}
+    view: dict[str, Any] = {key: merged.get(key) for key in _DEPLOY_FIELDS}
+    options = dict(_mapping(deploy_raw.get("options"), "deploy.options"))
+    for key, value in merged.items():
+        if key not in _DEPLOY_FIELDS and key not in ("envs", "protected") and key not in options:
+            options[str(key)] = value
+    options.update(_mapping(override.get("options"), f"deploy.envs.{name}.options"))
+    view["options"] = options
+    return view
+
+
+def _load_deploy(deploy_raw: dict[str, Any], env: str | None, custom: bool) -> DeployConfig:
+    envs_raw = _mapping(deploy_raw.get("envs"), "deploy.envs")
+    for name, override in envs_raw.items():
+        if not isinstance(name, str) or not _NAME.fullmatch(name):
+            raise ConfigError(f"galadon.yaml: deploy.envs has an invalid environment name: {name!r}")
+        unknown = sorted(set(str(key) for key in _mapping(override, f"deploy.envs.{name}")) - set(_ENV_FIELDS))
+        if unknown:
+            raise ConfigError(
+                f"galadon.yaml: deploy.envs.{name} has unknown keys: {', '.join(unknown)} "
+                f"(allowed: {', '.join(_ENV_FIELDS)})"
+            )
+
+    default_env = _string(deploy_raw.get("env", "test"), "deploy.env").strip()
+    if not default_env:
+        raise ConfigError("galadon.yaml: deploy.env must not be empty")
+    selected = env if env is not None else default_env
+    if selected != default_env and selected not in envs_raw:
+        raise ConfigError(
+            f"galadon.yaml defines no deploy.envs.{selected} (defined: "
+            f"{', '.join(envs_raw) or 'none'}); add it, or target {default_env}"
+        )
+
+    views: dict[str, dict[str, Any]] = {
+        name: _deploy_view(deploy_raw, override, name) for name, override in envs_raw.items()
+    }
+    if default_env not in views:
+        views[default_env] = _deploy_view(deploy_raw, {}, default_env)
+
+    adapter = _blank_is_empty(deploy_raw.get("adapter", "local"), "deploy.adapter").strip()
+    adapter = adapter or ("custom" if custom else "local")
+    if custom:
+        if not _NAME.fullmatch(adapter):
+            raise ConfigError(f"galadon.yaml: deploy.adapter must be a short name (got {adapter!r})")
+    elif adapter not in ADAPTERS:
+        raise ConfigError("galadon.yaml: deploy.adapter must be local, ssh or k8s")
+
+    for name, view in views.items():
+        where = f"deploy.envs.{name}" if name in envs_raw else "deploy"
+        if adapter == "ssh":
+            _validate_ssh_options(view["options"], _blank_is_empty(view["artifact"], f"{where}.artifact").strip(), where)
+        _validate_options(view["options"], where)
+
+    view = views[selected]
+    where = f"deploy.envs.{selected}" if selected in envs_raw else "deploy"
+    override = _mapping(envs_raw.get(selected), f"deploy.envs.{selected}")
+    protected = (
+        _boolean(override["protected"], f"deploy.envs.{selected}.protected")
+        if "protected" in override
+        else selected.lower().startswith("prod")
+    )
+    return DeployConfig(
+        adapter=adapter,
+        env=selected,
+        build=_blank_is_empty(view["build"], f"{where}.build"),
+        migrate=_blank_is_empty(view["migrate"], f"{where}.migrate"),
+        release=_blank_is_empty(view["release"], f"{where}.release"),
+        probe_url=_blank_is_empty(view["probe_url"], f"{where}.probe_url").strip(),
+        probe_expect=_blank_is_empty(view["probe_expect"], f"{where}.probe_expect").strip(),
+        artifact=_blank_is_empty(view["artifact"], f"{where}.artifact").strip(),
+        options=dict(view["options"]),
+        envs=tuple(envs_raw),
+        protected=protected,
+    )
+
+
+def _load_checks(raw: dict[str, Any]) -> ChecksConfig:
+    timeout = raw.get("timeout", 300)
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
+        raise ConfigError(
+            f"galadon.yaml: checks.timeout must be a positive whole number of seconds (got {timeout!r})"
+        )
+    return ChecksConfig(
+        build=_blank_is_empty(raw.get("build"), "checks.build").strip(),
+        test=_blank_is_empty(raw.get("test"), "checks.test").strip(),
+        timeout=timeout,
+    )
+
+
+def _load_ports(raw: Any, root: Path) -> PortsConfig:
+    raw = _mapping(raw, "ports")
+    unknown = sorted(set(str(key) for key in raw) - set(_PORT_KEYS))
+    if unknown:
+        raise ConfigError(
+            f"galadon.yaml: ports has unknown keys: {', '.join(unknown)} "
+            f"(allowed: {', '.join(_PORT_KEYS)})"
+        )
+
+    def reference(key: str) -> str:
+        value = raw.get(key)
+        value = ("" if value is None else _string(value, f"ports.{key}")).strip()
+        if value and not _REFERENCE.fullmatch(value):
+            raise ConfigError(
+                f"galadon.yaml: ports.{key} must point at code inside the project as module:Attribute "
+                f"(got {value!r})"
+            )
+        return value
+
+    template = ""
+    if raw.get("template") is not None:
+        value = _string(raw["template"], "ports.template").strip()
+        directory = Path(value).expanduser()
+        if not directory.is_absolute():
+            directory = root / directory
+        if not (directory / "base").is_dir():
+            raise ConfigError(
+                f"galadon.yaml: ports.template must be a template directory containing base/ (got {directory})"
+            )
+        template = str(directory)
+    return PortsConfig(role=reference("role"), template=template, deploy=reference("deploy"))
 
 
 def _validate_path(value: str, key: str) -> Path:
@@ -186,7 +417,9 @@ def _load_paths(raw: Any) -> PathsConfig:
     )
 
 
-def load_config(root: Path) -> ProjectConfig:
+def load_config(root: Path, env: str | None = None) -> ProjectConfig:
+    """Read galadon.yaml. `env` selects one of `deploy.envs`; None uses the
+    default `deploy.env`. The returned deploy settings are that environment's."""
     path = root / "galadon.yaml"
     if not path.is_file():
         raise ConfigError(f"missing {path}; run `galadon init` first")
@@ -204,60 +437,43 @@ def load_config(root: Path) -> ProjectConfig:
             f"(allowed: {', '.join(TOP_LEVEL_KEYS)})"
         )
 
-    name = str(data.get("project", "")).strip()
+    raw_name = data.get("project")
+    name = "" if raw_name is None else _string(raw_name, "project").strip()
     if not name:
         raise ConfigError("galadon.yaml: project is required")
-    template = str(data.get("template", "")).strip()
-    if template not in TEMPLATES:
-        raise ConfigError("galadon.yaml: template must be web, api or static")
-    role = str(data.get("role", "solo")).strip()
-    if role not in {"solo", "six-ring", "orchestrator"}:
-        raise ConfigError("galadon.yaml: role must be solo, six-ring or orchestrator")
-    layout = str(data.get("layout", "none")).strip() or "none"
-    if layout not in LAYOUTS:
-        raise ConfigError(f"galadon.yaml: layout must be {', '.join(LAYOUTS)}")
-    stack = str(data.get("stack", "none")).strip() or "none"
-    if stack not in STACKS:
-        raise ConfigError(f"galadon.yaml: stack must be {', '.join(STACKS)}")
 
-    deploy_raw = data.get("deploy") or {}
-    checks_raw = data.get("checks") or {}
-    if not isinstance(deploy_raw, dict):
-        raise ConfigError("galadon.yaml: deploy must be a mapping")
-    if not isinstance(checks_raw, dict):
-        raise ConfigError("galadon.yaml: checks must be a mapping")
+    ports = _load_ports(data.get("ports"), root)
+    raw_template = data.get("template")
+    if ports.template:
+        # A project that ships its own templates also names its own profiles.
+        template = raw_template.strip() if isinstance(raw_template, str) else ""
+        if not _NAME.fullmatch(template) or not (Path(ports.template) / "profiles" / template).is_dir():
+            raise ConfigError(
+                f"galadon.yaml: template {template!r} is not a profile under "
+                f"{ports.template}/profiles"
+            )
+    else:
+        template = _enum(raw_template, TEMPLATES, "template must be web, api or static")
 
-    options_raw = deploy_raw.get("options", {})
-    if options_raw is None:
-        options_raw = {}
-    if not isinstance(options_raw, dict):
-        raise ConfigError("galadon.yaml: deploy.options must be a mapping")
-    options = dict(options_raw)
-    for key, value in deploy_raw.items():
-        if key not in _DEPLOY_FIELDS and key not in options:
-            options[str(key)] = value
+    raw_role = data.get("role", "solo")
+    if ports.role:
+        role = raw_role.strip() if isinstance(raw_role, str) else ""
+        if not _NAME.fullmatch(role):
+            raise ConfigError(f"galadon.yaml: role must be a short name (got {raw_role!r})")
+    else:
+        role = _enum(raw_role, ROLES, "role must be solo, six-ring or orchestrator")
 
-    deploy = DeployConfig(
-        adapter=str(deploy_raw.get("adapter", "local")),
-        env=str(deploy_raw.get("env", "test")),
-        build=str(deploy_raw.get("build", "")),
-        migrate=str(deploy_raw.get("migrate", "")),
-        release=str(deploy_raw.get("release", "")),
-        probe_url=str(deploy_raw.get("probe_url", "")),
-        probe_expect=str(deploy_raw.get("probe_expect", "")),
-        artifact=str(deploy_raw.get("artifact", "")),
-        options=options,
+    layout = _enum(
+        data.get("layout", "none"), LAYOUTS, "layout must be none, webapp, service, plugin", empty="none"
     )
-    if deploy.adapter not in {"local", "ssh", "k8s"}:
-        raise ConfigError("galadon.yaml: deploy.adapter must be local, ssh or k8s")
-    if deploy.adapter == "ssh":
-        _validate_ssh_options(options, deploy.artifact)
-
-    checks = ChecksConfig(
-        build=str(checks_raw.get("build") or ""),
-        test=str(checks_raw.get("test") or ""),
-        timeout=int(checks_raw.get("timeout") or 300),
+    stack = _enum(
+        data.get("stack", "none"), STACKS, "stack must be python, node, none", empty="none"
     )
+
+    deploy = _load_deploy(
+        _mapping(data.get("deploy"), "deploy"), env, custom=bool(ports.deploy)
+    )
+    checks = _load_checks(_mapping(data.get("checks"), "checks"))
     paths = _load_paths(data.get("paths"))
 
     return ProjectConfig(
@@ -269,4 +485,5 @@ def load_config(root: Path) -> ProjectConfig:
         layout=layout,
         stack=stack,
         paths=paths,
+        ports=ports,
     )

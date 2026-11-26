@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "galadon"
-version = "0.3.7"
+version = "0.3.8"
 description = "A five-stage engineering loop for agent-built projects, with a layout/stack scaffold generator."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,3 +23,9 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# The templates are the scaffold: a pip-installed CLI without them could not
+# run `init`. The dot patterns carry the `.gitkeep` files that keep the empty
+# `.agents/` slots.
+[tool.setuptools.package-data]
+galadon = ["templates/**/*", "templates/**/.*", "templates/**/*/.gitkeep"]

@@ -103,7 +103,7 @@ class SshAdapterTests(unittest.TestCase):
                 "build": "",
                 "migrate": "",
                 "release": "",
-                "probe_url": "",
+                "probe_url": "https://demo.example.com/health.json",
                 "probe_expect": "",
                 "artifact": "dist",
                 "options": options,
@@ -496,136 +496,91 @@ class SshAdapterTests(unittest.TestCase):
         script = self.runner.calls[0]["input"]
         self.assertIn('printf \'%s\\n\' "$marker" > "$root/.galadon-root"', script)
 
-
-class FakeShipAdapter:
-    name = "ssh"
-
-    def __init__(self) -> None:
-        self.probe_calls = 0
-        self.rollback_calls = 0
-        self.events: list[str] = []
-
-    def describe(self, ctx) -> str:
-        return "root@example:/srv/demo"
-
-    def preflight(self, ctx) -> dict:
-        self.events.append("preflight")
-        result = {"target": "root@example", "remote_root": "/srv/demo", "service": "demo"}
-        if getattr(self, "preflight_notes", None):
-            result["notes"] = self.preflight_notes
-        return result
-
-    def build(self, ctx) -> Artifact:
-        self.events.append("build")
-        path = ctx.root / "dist"
-        path.mkdir(exist_ok=True)
-        return Artifact(path=path, digest="digest")
-
-    def migrate(self, ctx) -> None:
-        self.events.append("migrate")
-        return None
-
-    def release(self, ctx, artifact: Artifact) -> Release:
-        self.events.append("release")
-        return Release(
-            env=ctx.env,
-            artifact=artifact,
-            adapter=self.name,
-            metadata={"commit": "bad1234"},
+    def test_preflight_refuses_an_unusable_probe_before_touching_the_host(self) -> None:
+        self.write_config()
+        data = yaml.safe_load(self.config_path.read_text(encoding="utf-8"))
+        data["deploy"]["probe_url"] = ""
+        self.config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        self.ctx = DeployContext(
+            root=self.project, config=load_config(self.project), env="test"
         )
 
-    def probe(self, ctx, release: Release) -> ProbeResult:
-        self.events.append("probe")
-        self.probe_calls += 1
-        return ProbeResult(ok=False, detail="commit mismatch", url=ctx.config.deploy.probe_url)
+        with self.assertRaises(DeployError) as caught:
+            self.adapter.preflight(self.ctx)
 
-    def rollback(self, ctx, release: Release) -> None:
-        self.events.append("rollback")
-        self.rollback_calls += 1
-        release.metadata["rollback"] = {
-            "version": "good123",
-            "target": "/srv/demo/releases/20261104-150000-good123",
-            "ok": True,
-            "probe": {"ok": True, "detail": "HTTP 200 commit good123", "url": None},
-        }
+        self.assertIn("probe_url is required", str(caught.exception))
+        self.assertEqual(self.runner.calls, [], "nothing may reach the host first")
 
+    def test_a_first_release_rollback_stops_the_service_and_reprobes_nothing(self) -> None:
+        self.runner.ssh_output = "GALADON_FIRST_RELEASE=1\nGALADON_OK=1\n"
+        artifact = Artifact(path=self.project / "dist", digest="digest")
+        release = Release(env="test", artifact=artifact, adapter="ssh", metadata={"commit": "abc1234"})
 
-class ShipRollbackTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="galadon-ship-"))
-        self.project = self.tmp / "demo"
-        self.project.mkdir()
-        (self.project / "spec").mkdir()
-        (self.project / "spec" / "spec.md").write_text(
-            "# demo\n\n## Problem\n\np\n\n## Acceptance\n\n- [ ] a\n\n## Non-goals\n\nn\n",
-            encoding="utf-8",
-        )
-        (self.project / "galadon.yaml").write_text(
-            yaml.safe_dump(
-                {
-                    "project": "demo",
-                    "template": "web",
-                    "role": "solo",
-                    "deploy": {
-                        "adapter": "ssh",
-                        "env": "test",
-                        "artifact": "dist",
-                        "options": {
-                            "host": "203.0.113.10",
-                            "user": "root",
-                            "remote_root": "/srv/demo",
-                            "service": "demo",
-                        },
-                    },
-                    "checks": {"build": "true", "test": "true", "timeout": 30},
-                },
-                sort_keys=False,
-            ),
-            encoding="utf-8",
-        )
+        self.adapter.rollback(self.ctx, release)
 
-    def tearDown(self) -> None:
-        import shutil
-
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def test_ship_rolls_back_and_records_actual_version(self) -> None:
-        from galadon.cli import main
-
-        adapter = FakeShipAdapter()
-        with mock.patch("galadon.cli.adapter_for", return_value=adapter):
-            code = main(["ship", "--path", str(self.project), "--env", "test"])
-        self.assertEqual(code, 1)
-        self.assertEqual(adapter.probe_calls, 1)
-        self.assertEqual(adapter.rollback_calls, 1)
         self.assertEqual(
-            adapter.events,
-            ["preflight", "build", "migrate", "release", "probe", "rollback"],
+            release.metadata["rollback"],
+            {
+                "version": None,
+                "target": None,
+                "ok": True,
+                "first_release": True,
+                "service_stopped": True,
+            },
         )
-        record = json.loads((self.project / "release" / "release.json").read_text(encoding="utf-8"))
-        self.assertFalse(record["ok"])
-        self.assertEqual(record["commit"], "bad1234")
-        self.assertEqual(record["actual_commit"], "good123")
-        self.assertTrue(record["rollback"]["ok"])
-        self.assertEqual(record["rollback"]["version"], "good123")
+        script = self.runner.calls[0]["input"]
+        self.assertIn('rm -f "$root/current"', script)
+        self.assertIn('systemctl stop "$service"', script)
+        self.assertNotIn("GALADON_ROLLBACK_TO", script[: script.index("GALADON_FIRST_RELEASE")])
 
-    def test_ship_prints_preflight_notes(self) -> None:
-        from galadon.cli import main
-
-        adapter = FakeShipAdapter()
-        adapter.preflight_notes = [
-            "skipping unit drift check: unit template incomplete "
-            "(missing bootstrap keys: domain, listen)"
-        ]
-        out, err = io.StringIO(), io.StringIO()
-        with mock.patch("galadon.cli.adapter_for", return_value=adapter):
-            with redirect_stdout(out), redirect_stderr(err):
-                code = main(["ship", "--path", str(self.project), "--env", "test"])
-        self.assertEqual(code, 1)
-        self.assertIn(
-            "galadon: skipping unit drift check: unit template incomplete",
-            err.getvalue(),
+    def test_release_migrates_on_the_host_before_the_switch_and_prunes_after_it(self) -> None:
+        self.write_config(
+            remote_migrate="python -m migrate",
+            keep_releases=2,
+            environment_file="/srv/demo/shared/env",
         )
+        self.ctx = DeployContext(
+            root=self.project, config=load_config(self.project), env="test"
+        )
+        self.runner.ssh_output = (
+            "GALADON_PREVIOUS=\n"
+            "GALADON_PRUNED= 20261101-000000-old1 20261101-000100-old2\n"
+            "GALADON_OK=1\n"
+        )
+
+        release = self.adapter.release(self.ctx, self.adapter.build(self.ctx))
+
+        self.assertEqual(
+            release.metadata["pruned"], ["20261101-000000-old1", "20261101-000100-old2"]
+        )
+        script = next(
+            call["input"] for call in self.runner.calls if "mv -Tf" in (call["input"] or "")
+        )
+        self.assertIn("remote_migrate='python -m migrate'", script)
+        self.assertIn("keep_releases=2", script)
+        switch = 'mv -Tf "$root/.current.new" "$root/current"'
+        self.assertLess(script.index('eval "$remote_migrate"'), script.index(switch))
+        self.assertLess(script.index(switch), script.index("printf 'GALADON_PRUNED"))
+        self.assertIn("current was not switched", script)
+
+    def test_bootstrap_keeps_a_site_out_of_search_engines_until_it_opts_in(self) -> None:
+        self.runner.ssh_output = "GALADON_OK=1\n"
+        self.adapter.bootstrap(self.ctx)
+        script = self.runner.calls[0]["input"]
+        self.assertIn('header X-Robots-Tag "noindex, nofollow"', script)
+        self.assertIn("Disallow: /", script)
+        self.assertNotIn("EnvironmentFile=", script)
+
+        self.write_config(environment_file="/srv/demo/shared/env", search_index=True)
+        self.ctx = DeployContext(
+            root=self.project, config=load_config(self.project), env="test"
+        )
+        self.adapter.bootstrap(self.ctx)
+        script = self.runner.calls[-1]["input"]
+        self.assertNotIn("noindex", script)
+        self.assertNotIn("Disallow", script)
+        self.assertIn("reverse_proxy 127.0.0.1:18790", script)
+        self.assertIn("EnvironmentFile=/srv/demo/shared/env", script)
 
 
 if __name__ == "__main__":

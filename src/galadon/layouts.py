@@ -169,6 +169,25 @@ def layout_listing() -> str:
     return "\n".join(lines)
 
 
+def ensure_agent_slots(root: Path, config: ProjectConfig) -> list[str]:
+    """Recreate the `.agents/` slots a fresh clone lacks, and name the ones
+    that were missing.
+
+    The slots are agent runtime state, so the scaffold's own `.gitignore`
+    keeps them out of git and every clone starts without them. Recreating an
+    empty gitignored slot restores the layout; it hides nothing.
+    """
+    if config.layout == "none":
+        return []
+    created: list[str] = []
+    for slot in AGENT_SLOTS:
+        directory = root / ".agents" / slot
+        if not directory.is_dir():
+            directory.mkdir(parents=True, exist_ok=True)
+            created.append(slot)
+    return created
+
+
 def _gitignore_entries(root: Path) -> set[str]:
     path = root / ".gitignore"
     if not path.is_file():

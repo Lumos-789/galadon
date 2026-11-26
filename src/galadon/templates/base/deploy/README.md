@@ -8,5 +8,6 @@ retained `previous` and a `shared/deploy.lock`. A failed probe restores
 `previous` and re-probes it.
 
 The `ssh` adapter is built in: set `deploy.adapter: ssh` in `galadon.yaml`. To
-connect Kubernetes, implement `DeployPort` and register a new adapter. Do not
-fake success by removing the probe.
+connect Kubernetes or anything else, write a `DeployPort` in this project and point
+`ports.deploy` at it. `deploy.envs` gives each environment its own target and
+probe; `--env` picks one. Do not fake success by removing the probe.

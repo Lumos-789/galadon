@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import fcntl
+import itertools
 import sys
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -12,10 +14,12 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from galadon.adapters.local import DeployError, LocalCommandAdapter  # noqa: E402
 from galadon.config import load_config  # noqa: E402
 from galadon.ports import Artifact, DeployContext  # noqa: E402
+from helpers import ProbeServer  # noqa: E402
 
 
 class ProbeHandler(BaseHTTPRequestHandler):
@@ -62,7 +66,7 @@ class LocalAdapterTests(unittest.TestCase):
         self.server.server_close()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def write_config(self, *, probe_expect: str = "") -> None:
+    def write_config(self, *, probe_expect: str = "", options: dict | None = None) -> None:
         data = {
             "project": "demo",
             "template": "web",
@@ -76,6 +80,7 @@ class LocalAdapterTests(unittest.TestCase):
                 "probe_url": self.probe_url,
                 "probe_expect": probe_expect,
                 "artifact": "dist",
+                "options": options or {},
             },
             "checks": {"build": "", "test": "", "timeout": 30},
         }
@@ -197,6 +202,111 @@ class LocalAdapterTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.actual, "6139370")
+
+    def test_preflight_refuses_an_unusable_probe_before_anything_is_built(self) -> None:
+        # It used to be discovered by the probe, with the new release live.
+        self.write_config(probe_expect="")
+        self.ctx.config = load_config(self.project)
+        with self.assertRaises(DeployError) as caught:
+            self.adapter.preflight(self.ctx)
+        self.assertIn("probe_expect is required", str(caught.exception))
+
+        self.config_path.write_text(
+            self.config_path.read_text(encoding="utf-8").replace(self.probe_url, ""), encoding="utf-8"
+        )
+        self.ctx.config = load_config(self.project)
+        with self.assertRaises(DeployError) as caught:
+            self.adapter.preflight(self.ctx)
+        self.assertIn("probe_url is required", str(caught.exception))
+        self.assertFalse(self.deploy_root.exists())
+
+    def test_a_healthy_probe_passes_preflight(self) -> None:
+        self.write_config(probe_expect="v1")
+        self.ctx.config = load_config(self.project)
+        result = self.adapter.preflight(self.ctx)
+        self.assertEqual(result["probe"], self.probe_url)
+        self.assertEqual(result["notes"], [])
+
+    def test_a_failed_first_release_leaves_nothing_live(self) -> None:
+        # Nothing was live before the first release, so a rollback restores
+        # exactly that instead of leaving the failed release on `current`.
+        release = self.adapter.release(self.ctx, self.artifact())
+
+        self.adapter.rollback(self.ctx, release)
+
+        self.assertFalse((self.deploy_root / "current").is_symlink())
+        self.assertEqual(
+            release.metadata["rollback"],
+            {"version": None, "target": None, "ok": True, "first_release": True},
+        )
+        self.assertTrue(Path(release.metadata["release_dir"]).is_dir(), "kept as the record")
+
+    def _release_series(self, keep: int) -> list:
+        self.write_config(options={"keep_releases": keep})
+        self.ctx.config = load_config(self.project)
+        minute = itertools.count(0)
+        adapter = LocalCommandAdapter(
+            clock=lambda: datetime(2026, 1, 1, 0, 0, next(minute), tzinfo=timezone.utc)
+        )
+        releases = []
+        for commit in ("aaaa111", "bbbb222", "cccc333", "dddd444"):
+            self.ctx.commit = commit
+            releases.append(adapter.release(self.ctx, self.artifact()))
+        return releases
+
+    def test_old_releases_are_pruned_but_never_the_live_ones(self) -> None:
+        (self.deploy_root / "releases").mkdir(parents=True)
+        (self.deploy_root / "releases" / "not-ours").mkdir()
+        (self.deploy_root / "releases" / "not-ours" / "data.txt").write_text("x", encoding="utf-8")
+
+        releases = self._release_series(keep=2)
+
+        names = sorted(path.name for path in (self.deploy_root / "releases").iterdir())
+        self.assertEqual(len(names), 3)
+        self.assertIn("not-ours", names, "a directory galadon did not name is never removed")
+        self.assertTrue((self.deploy_root / "current").resolve().name.endswith("-dddd444"))
+        self.assertTrue((self.deploy_root / "previous").resolve().name.endswith("-cccc333"))
+        self.assertTrue(releases[0].metadata["release_dir"].endswith("-aaaa111"))
+        # Each release prunes what is now beyond the limit, so the oldest go
+        # first and earliest; nothing live is ever among them.
+        pruned = sorted(sum((release.metadata["pruned"] for release in releases), []))
+        self.assertEqual(
+            pruned,
+            sorted(
+                [
+                    Path(releases[0].metadata["release_dir"]).name,
+                    Path(releases[1].metadata["release_dir"]).name,
+                ]
+            ),
+        )
+        for release in releases[:2]:
+            self.assertFalse(Path(release.metadata["release_dir"]).exists())
+
+    def test_keep_releases_zero_keeps_everything(self) -> None:
+        releases = self._release_series(keep=0)
+        self.assertEqual(len(list((self.deploy_root / "releases").iterdir())), 4)
+        self.assertEqual(releases[-1].metadata["pruned"], [])
+
+    def test_a_just_restarted_service_behind_a_gateway_is_waited_for(self) -> None:
+        # The readiness window also covers the 502 a reverse proxy answers
+        # while the upstream is still starting.
+        def handler(requests: int) -> tuple[int, str]:
+            return (502, "bad gateway") if requests < 2 else (200, '{"commit": "good123"}')
+
+        gateway = ProbeServer(handler=handler)
+        try:
+            self.write_config(probe_expect="good123")
+            self.config_path.write_text(
+                self.config_path.read_text(encoding="utf-8").replace(self.probe_url, gateway.url),
+                encoding="utf-8",
+            )
+            self.ctx.config = load_config(self.project)
+            adapter = LocalCommandAdapter(probe_ready=1.0)
+            result = adapter.probe(self.ctx, adapter.release(self.ctx, self.artifact()))
+            self.assertTrue(result.ok, result.detail)
+            self.assertEqual(gateway.requests, 3)
+        finally:
+            gateway.stop()
 
 
 if __name__ == "__main__":

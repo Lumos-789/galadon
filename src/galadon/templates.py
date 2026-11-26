@@ -7,7 +7,7 @@ from pathlib import Path
 from .config import DEFAULT_PATHS, LAYOUTS, STACKS
 from .layouts import LAYOUT_RETRO, LAYOUT_SPECS, checks_for, npm_name, package_name
 
-PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+BUNDLED_TEMPLATES = Path(__file__).resolve().parent / "templates"
 
 # `.agents/` is gitignored inside the galadon repo itself, and npm drops every
 # `.gitignore` from the published tarball, so templates store the leading dot
@@ -32,8 +32,21 @@ class TemplateError(ValueError):
 
 
 class FileTemplateProvider:
-    def __init__(self, plugin_root: Path | None = None) -> None:
-        self.plugin_root = plugin_root or PLUGIN_ROOT
+    """Renders `templates/`: base, then the profile, then the layout layers.
+
+    Rendering only ever adds files. Whatever the project already has is kept
+    and reported under `skipped`, so `init` into an existing project can never
+    overwrite a README, a spec or a hand-written `galadon.yaml`.
+    """
+
+    def __init__(self, templates_dir: Path | None = None) -> None:
+        self.templates_dir = templates_dir or BUNDLED_TEMPLATES
+
+    def profiles(self) -> list[str]:
+        directory = self.templates_dir / "profiles"
+        if not directory.is_dir():
+            return []
+        return sorted(path.name for path in directory.iterdir() if path.is_dir())
 
     def _files(self, directory: Path) -> list[Path]:
         if not directory.is_dir():
@@ -58,7 +71,6 @@ class FileTemplateProvider:
         profile: str,
         role: str,
         name: str,
-        force: bool = False,
         layout: str = "none",
         stack: str = "python",
     ) -> dict[str, list[str]]:
@@ -72,8 +84,8 @@ class FileTemplateProvider:
             raise TemplateError(f"project name must not be a path component: {name}")
         effective_stack = stack if layout != "none" else "none"
 
-        base = self.plugin_root / "templates" / "base"
-        overlay = self.plugin_root / "templates" / "profiles" / profile
+        base = self.templates_dir / "base"
+        overlay = self.templates_dir / "profiles" / profile
         if not base.is_dir():
             raise TemplateError(f"missing template base: {base}")
         if not overlay.is_dir():
@@ -84,20 +96,18 @@ class FileTemplateProvider:
         # never renders the shared layer.
         layers: list[tuple[Path, bool]] = [(base, True), (overlay, False)]
         if layout != "none":
-            shared = self.plugin_root / "templates" / "layouts" / SHARED_LAYER
+            shared = self.templates_dir / "layouts" / SHARED_LAYER
             if not shared.is_dir():
                 raise TemplateError(f"missing shared layout template: {shared}")
             layers.append((shared, False))
-            layout_root = self.plugin_root / "templates" / "layouts" / layout
+            layout_root = self.templates_dir / "layouts" / layout
             common = layout_root / "common"
             if not common.is_dir():
                 raise TemplateError(f"missing layout common template: {common}")
             layers.append((common, False))
             if effective_stack != "none":
                 stack_owner = LAYOUT_SPECS[layout].stack_templates or layout
-                stack_dir = (
-                    self.plugin_root / "templates" / "layouts" / stack_owner / effective_stack
-                )
+                stack_dir = layout_root.parent / stack_owner / effective_stack
                 if not stack_dir.is_dir():
                     raise TemplateError(
                         f"missing template stack {effective_stack} for layout {layout}: {stack_dir}"
@@ -128,7 +138,7 @@ class FileTemplateProvider:
                 if is_base and layout != "none" and relative.as_posix() in LAYOUT_SUPERSEDES:
                     continue
                 target = root / relative
-                if target.exists() and target not in written_targets and not force:
+                if target.exists() and target not in written_targets:
                     skipped.append(str(relative))
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)

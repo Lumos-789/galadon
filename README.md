@@ -10,14 +10,14 @@ Galadon initializes a small engineering workspace, then keeps the agent on one
 phase at a time. The core knows only phases, artifacts and gates. Everything
 else is a port:
 
-| Port | Purpose | Reference implementation |
-|---|---|---|
-| `RolePort` | Who does the work | `solo` |
-| `TemplatePort` | Which `docs/profile.md` to write; the code skeleton comes from `--layout`/`--stack` | `web`, `api`, `static` |
-| `DeployPort` | How to build, migrate, release, probe and roll back | `local`, `ssh` |
+| Port | Purpose | Bundled | Replaced by |
+|---|---|---|---|
+| `RolePort` | Who does the work | `solo`, `six-ring`, `orchestrator` | `ports.role` |
+| `TemplatePort` | The template tree: profiles and layout skeletons | profiles `web`, `api`, `static` | `ports.template` |
+| `DeployPort` | How to build, migrate, release, probe and roll back | `local`, `ssh` | `ports.deploy` |
 
-The bundled implementations are examples. A project can replace any port
-without changing the five-stage loop.
+A project replaces a port in `galadon.yaml` without touching the five-stage
+loop (see [Ports](#ports)).
 
 ## Install
 
@@ -47,9 +47,12 @@ Requires Python 3.10+ and `PyYAML`.
 ## Quick start
 
 ```bash
-galadon init --template api --role solo   # empty directory, or --force to add files
+galadon init --template api --role solo   # an empty directory; --force adds the missing files to one that is not
 galadon next                              # one phase, one next action
 ```
+
+`init` never overwrites: whatever the directory already has is kept and
+listed, so `--force` is safe on a project with a history.
 
 Then let the agent drive: it reads `galadon.yaml`, does the current phase, and
 runs `galadon check` until the loop reaches `learn`. With the default `none`
@@ -59,6 +62,29 @@ it. `init` also leaves `checks.build` and `checks.test` empty on purpose, so
 once the spec is done `check` fails loudly with "no checks configured — declare
 checks.build/checks.test" until you declare the real commands. A non-`none`
 layout ships a filled-in spec and real checks instead (see Layouts below).
+
+## The gates
+
+`next` names one phase and one action, `check` runs the current gate, and
+`ship` refuses — before it builds or touches a host — while any of these holds:
+
+- the loop has already shipped: write the retro or run `galadon new`;
+- the tree has uncommitted or untracked changes (git that cannot answer is an
+  error, not a clean tree);
+- a criterion under `## Acceptance` in the spec is still unticked;
+- the target is a protected environment and `--yes-prod` is missing.
+
+A green `check` is bound to the commit and the uncommitted files it ran
+against. Change the project afterwards and `next` sends you back to `verify`.
+Committing exactly what was checked does not count as a change. A project
+that nothing versions is not bound.
+
+`ship --dry-run` prints the plan and every reason a real ship would refuse. It
+runs no check and writes nothing. A failed `check` prints the failing
+command's stderr, not just its exit code.
+
+`galadon new` archives the check record, the release record and the retro, so
+the next loop gets a `learn` phase of its own.
 
 ## Layouts
 
@@ -106,7 +132,9 @@ layout contract: `AGENTS.md`, `openspec/config.yaml`, `spec/INDEX.md`,
 directories, the six `.agents/` slots, non-empty checks, and `out/` +
 `.agents/` in `.gitignore`. A missing item fails the gate and is named.
 `.agents/` is stored in the templates as `__agents__/` because `.agents/` is
-gitignored in this repository; the renderer maps it back during render.
+gitignored in this repository; the renderer maps it back during render. The
+same `.gitignore` keeps the slots out of every clone, so `next`, `check` and
+`ship` recreate the ones that are missing and say so on stderr.
 
 The `paths:` block in `galadon.yaml` moves the stage artifacts (`spec`,
 `evidence`, `retro`, `release`). Defaults are the 0.2.x paths; layouts put the
@@ -131,8 +159,39 @@ galadon ship --env test
 galadon teardown --env test --yes
 ```
 
-`ship` refuses to report success without a real probe. Production releases
-require `--yes-prod` in the current session.
+`ship` refuses to report success without a real probe. Protected environments
+require `--yes-prod` in the same invocation.
+
+## Environments
+
+`deploy.envs` gives each environment its own target and probe, and `--env`
+picks one; `deploy.env` is the default. An environment may override any
+deploy setting except `adapter`; `options` merges key by key.
+
+```yaml
+deploy:
+  adapter: ssh
+  env: test
+  artifact: dist
+  probe_expect: "{{COMMIT}}"
+  options:
+    service: demo
+    run_user: demo
+    exec_start: "/usr/bin/python3 /srv/demo/current/server.py"
+  envs:
+    test:
+      options: {host: test.example.com, remote_root: /srv/demo}
+      probe_url: "https://test.example.com/health.json"
+    prod:
+      options: {host: demo.example.com, remote_root: /srv/demo}
+      probe_url: "https://demo.example.com/health.json"
+```
+
+Naming an environment that is not defined is an error, so a release can no
+longer be recorded against a target it never went to. An environment whose
+name starts with `prod` is protected, and so is one that sets
+`protected: true`; shipping to it, or bootstrapping or tearing it down,
+requires `--yes-prod` in the same invocation.
 
 ## Remote deploys
 
@@ -164,12 +223,52 @@ reverse-proxy block (it backs the proxy config up and validates before
 reloading). `teardown --yes` only removes a root that still carries the
 `bootstrap` marker.
 
+`deploy.options` for the `ssh` adapter:
+
+| Option | Meaning |
+|---|---|
+| `host`, `user`, `remote_root`, `service` | required: where to ship and what to restart |
+| `domain`, `listen`, `exec_start`, `caddy_block` | required by `bootstrap` |
+| `run_user` (default `galadon`), `manage_user` (default `true`) | the service account |
+| `environment_file` | an absolute path on the host, written into the unit as `EnvironmentFile=` |
+| `remote_migrate` | a command run on the host inside the new release, before `current` switches; a failure leaves `current` alone |
+| `keep_releases` (default `5`) | releases to keep besides the live and the previous one; `0` keeps all |
+| `search_index` (default `false`) | `true` drops the `noindex` header and the `robots.txt` block |
+| `probe_ready_seconds` (default `15`) | how long the probe waits for the service to answer |
+
+`keep_releases` and `probe_ready_seconds` apply to `local` as well.
+`deploy.migrate` runs on the machine that ships; `options.remote_migrate` runs
+on the host, which is where a database migration belongs.
+
+The probe waits for the service: a refused connection, and the 502/503/504 a
+reverse proxy answers while its upstream restarts, are retried inside
+`probe_ready_seconds`. Any other HTTP status is final and still has to carry
+the build's commit.
+
 `deploy.adapter: local` uses the same release tree under
 `deploy.options.root` (default `.galadon/deploy`):
 `releases/<timestamp>-<version>`, an atomic `current` switch, a retained
 `previous`, and `shared/deploy.lock`. A held lock refuses the ship; a failed
 probe restores `current` to `previous`, re-probes that release and exits
-non-zero with the live release named.
+non-zero with the live release named. Both adapters behave the same when the
+failed release was the first one: there is nothing to restore to, so `current`
+is removed (`ssh` also stops the service) and the release record says so.
+
+## Ports
+
+```yaml
+ports:
+  role: "team.roles:Pair"        # an object with assign(phase) -> role names
+  template: "./scaffold"         # a template tree: base/, profiles/, layouts/
+  deploy: "team.deploy:Nomad"    # a DeployPort
+```
+
+Each entry points at code or templates inside the project. When it names a
+class, Galadon instantiates it. A `DeployPort` provides `describe`, `build`,
+`migrate`, `release`, `probe`, `rollback`, `bootstrap`, `teardown` and a
+`name`; `preflight` is optional. A `RolePort` provides `assign(phase)`. A
+template root may add profiles, which `--template` then accepts. `k8s` is
+still a declared adapter with no implementation: this is how you connect one.
 
 ## Side effects
 
@@ -179,21 +278,26 @@ Read this before pointing it at a machine you care about.
   `options.manage_user: false`), `<remote_root>/{releases,shared}`, a systemd
   unit, and one marked block in the reverse-proxy config. The proxy config is
   backed up first and validated before any reload; a failed validation restores
-  it and does not reload.
+  it and does not reload. Every managed site is kept out of search engines
+  (`noindex` and a `robots.txt` that disallows all) unless
+  `options.search_index: true`.
 - `ship` writes an immutable release, switches `current` atomically and keeps
   `previous`; the `ssh` adapter also restarts the service. It then probes the
   release. A failed probe rolls back to `previous`, re-probes it and exits
-  non-zero.
+  non-zero; on a first release it removes `current` instead. After a successful
+  switch it deletes the oldest releases beyond `options.keep_releases`, never
+  the live or the previous one, and lists them in the release record.
 - `teardown --yes` removes the unit, the marked proxy block, the release tree
   and the system user, but only if the root still carries the `bootstrap`
   marker.
-- Every remote write prints its target first. `--env prod` additionally
-  requires `--yes-prod` in the same invocation.
+- Every remote write prints its target first. A protected environment
+  additionally requires `--yes-prod` in the same invocation.
 
 ## Limits
 
 - `DeployPort` implementations: `local` and `ssh` (systemd + Caddy). `k8s` is a
   declared port with no implementation; calling it fails loudly.
+- macOS and Linux only: the adapters rely on `fcntl` and `/bin/sh`.
 - The `ssh` adapter assumes root access (or an account that can write the unit
   and the proxy config), `rsync`, `flock` and `systemctl` on the target.
 - The proxy block uses a Caddy snippet named `access_log`; hosts without that
@@ -210,6 +314,8 @@ Read this before pointing it at a machine you care about.
 - The six-ring workflow is a `RolePort` preset, not the core.
 - Git content cannot authorize a production release.
 - Fail loud; no silent fallback and no partial-success claim.
+- `galadon.yaml` is read by exactly one loader: a key it does not know is an
+  error, and so is a key left empty where a value is required.
 
 ## Development
 

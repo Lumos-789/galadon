@@ -1,5 +1,114 @@
 # Changelog
 
+## 0.3.8
+
+A full review of 0.3.7 found sixteen things to fix; all of them are in here.
+
+- `init` only ever adds files. `--force` used to overwrite whatever the
+  directory already had — README, `AGENTS.md`, `.gitignore`, the spec and
+  `galadon.yaml` — while its help text and the error that suggested it both
+  said "add Galadon files". Adding Galadon to a project with a history now
+  keeps every existing file and lists them; the managed block is still
+  appended to `AGENTS.md`. Re-running `init` on a project whose
+  `galadon.yaml` names another layout or stack is refused, because the file
+  is kept and the request could not be honoured.
+- A fresh clone of a scaffolded project passes `galadon check` again. The
+  layout contract asked for six `.agents/` slots that the scaffold's own
+  `.gitignore` keeps out of git, so every clone — a colleague, CI, a new
+  machine — failed with "missing: .agents/plans/; …". The slots are local
+  runtime state by design, so `next`, `check` and `ship` now recreate the ones
+  that are missing and say so on stderr.
+- `pip install` delivers a working CLI. The wheel carried only the Python
+  modules, so `galadon init` from a pip or pipx install failed with "missing
+  template base". The templates live inside the package now
+  (`src/galadon/templates/`), declared as package data.
+- Every loop after the first skipped its retro. `galadon new` archived the
+  check and release records but left the previous retro in place, and that
+  retro satisfied the next loop's `learn` gate: the second ship went straight
+  to `done`. `new` archives the retro with the rest, and the `done` action
+  says to update the spec and run `new`.
+- An exception the probe did not wrap left the release live with no rollback
+  and no record. `ship` now treats any failure of the probe as a failed probe
+  — rollback, record, non-zero exit — and does the same for a rollback that
+  itself crashes.
+- A key left empty in `galadon.yaml` (`probe_url:` with nothing after it) was
+  read as the string `None` and requested as a URL once the release was
+  already switched. Empty means not configured everywhere, and the probe
+  settings are checked before anything is built: the local adapter's missing
+  `probe_expect`, which used to be discovered by the probe after the switch,
+  is refused up front too.
+- The readiness window also waits out a reverse proxy. It retried a refused
+  connection but took any HTTP answer as final, while the `ssh` adapter puts
+  every service behind Caddy — which answers 502/503/504 until the restarted
+  upstream listens. A service with a slow start failed its probe and rolled
+  back every time. Those three statuses are now "not ready yet" inside the
+  window; anything else is still final. The window is
+  `deploy.options.probe_ready_seconds` (default 15). The probe also closes
+  the responses it rejects instead of leaving them to the garbage collector.
+- A failed first release left the failed release live. With no `previous`,
+  rollback stopped at "no previous release link" and `current` stayed on the
+  release that had just failed. Nothing was live before a first release, so
+  that is what gets restored: `current` is removed, the `ssh` adapter also
+  stops the service, and the record and the message say so.
+- `ship --dry-run` is a preview. It ran the whole test suite, rewrote the
+  evidence and the check record, and moved the phase. It now runs nothing,
+  writes nothing, and prints the plan together with every reason a real ship
+  would refuse.
+- `galadon next` no longer trusts a stale green check. The check record is
+  bound to the commit and the uncommitted files it ran against; change the
+  project afterwards and `next` returns to `verify`. Committing exactly what
+  was checked is not a change, so "check, then commit" does not send the agent
+  back. `verify/evidence.md` names the commit that was checked.
+- `ship` refuses an unverified spec. A scaffold's placeholder spec ships with
+  every box unticked, and one green check on its hello-world test carried it
+  all the way to a release. Every criterion under `## Acceptance` has to be
+  ticked before `ship` runs; `next` in the `ship` phase says how many are open.
+- A failing `check` shows why. It printed only stdout, so a unittest failure
+  read as an empty `[1] test:` line and the reason sat in the evidence file.
+  The stderr of a failed command is printed with it.
+- git that cannot answer is an error, not a clean tree. A corrupt repository
+  read as "no git here" and switched the uncommitted-changes guard off. A
+  project inside another repository it is not tracked by no longer stamps
+  that repository's commit on its releases: it ships with none and says so.
+  A project that is a subdirectory of a larger repository is versioned by it
+  and judges only its own directory.
+- `checks.timeout` must be a positive whole number. `abc` raised a traceback,
+  `-5` made every check "time out after -5s", and `0` silently meant 300. A
+  truncated check or release record names the file and the way out instead of
+  a traceback, and records are written in one step so a crash cannot truncate
+  them.
+- `--env` selects a real target. It only relabelled the release, so
+  `ship --env prod` went to the `test` host and was recorded as `prod`.
+  `deploy.envs` now gives each environment its own target, options and probe,
+  and naming an environment that is not defined is an error. An environment is
+  protected when its name starts with `prod` or it sets `protected: true`;
+  the guard used to know only the literal `prod`.
+- The `ssh` adapter gained what a real deploy needs: `options.remote_migrate`
+  runs on the host inside the new release before `current` switches (a
+  failure leaves `current` alone), `options.environment_file` becomes
+  `EnvironmentFile=` in the unit, and `options.keep_releases` (default 5, `0`
+  keeps all) prunes the oldest releases after a successful switch, never the
+  live or the previous one. Releases used to accumulate forever.
+- `bootstrap` keeps every managed site out of search engines — `noindex` and a
+  `robots.txt` that disallows all — and never said so. It is documented now,
+  and `options.search_index: true` turns it off.
+- The ports are replaceable. `ports.role`, `ports.template` and `ports.deploy`
+  point at code or templates inside the project; the loader instantiates a
+  class, checks the port against its contract and names what is missing. The
+  README had promised this since 0.1.0 while every port was a hard-coded
+  branch. A template root may add profiles, so `--template` is no longer
+  limited to `web`, `api` and `static`.
+- The six-ring preset has its `fix` ring: verify is `test`, `fix`, `check`.
+- Smaller: `.galadon/state.json` was written by every command and read by
+  none, so it is gone; `next` leaves `AGENTS.md` alone when nothing changed;
+  `schema/galadon.schema.json` was shipped, never used and already out of step
+  with the loader, so the loader is the only description of the configuration;
+  the `ssh` adapter's remote scripts moved to their own module; a bad
+  `--template` no longer leaves an empty directory behind.
+- Tests: the bash the `ssh` adapter sends to a host is now executed in the
+  suite against a real release tree, with `systemctl`, `flock` and `chown`
+  replaced by logging shims. It had only ever been read as text.
+
 ## 0.3.7
 
 - Version sources realigned: `galadon.__version__` and `pyproject.toml` were

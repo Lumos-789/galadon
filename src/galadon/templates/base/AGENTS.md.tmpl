@@ -18,7 +18,10 @@
 
 - Do not write business code before the spec gate passes.
 - Do not ship before verification passes.
-- Production release requires explicit confirmation in the current session.
+- Tick each acceptance criterion in `spec/spec.md` once it is verified; `galadon ship`
+  refuses while one is unticked.
+- A protected environment (a name starting with `prod`, or `protected: true`) needs
+  `--yes-prod`, and only after the user confirms it in the current session.
 - Never put secret values in `galadon.yaml` or git.
 - Fail loud: no silent fallback, no partial-success claim.
 

@@ -18,9 +18,9 @@ top and open only what the current phase needs.
 | Truth | `spec/` | product behaviour facts | yes |
 | Knowledge | `wiki/{knowledge,progress,runbook}/` | durable why, current state, operations | yes |
 | Context | `.agents/{plans,wiki,evidence,skills,tmp,archive}/` | agent runtime state | no |
-| Code | `server/`, `web/` | backend and frontend | yes |
+| Code | `server/` | the service | yes |
 | Run | `scripts/`, `deploy/`, `config.md` | scripts, deploy and environment | yes |
-| Verify | `tests/`, `e2e/` | unit and end-to-end tests | yes |
+| Verify | `tests/` | unit and integration tests | yes |
 | Output | `out/` | build output | no |
 
 ## Knowledge ownership
@@ -51,6 +51,8 @@ knowledge hub outside the repo — never keep a second copy here.
 
 - Do not write business code before the spec gate passes.
 - Do not ship before verification passes.
+- Tick each acceptance criterion in `spec/spec.md` once it is verified; `galadon ship`
+  refuses while one is unticked.
 - Branch and deploy state changes touch `wiki/progress/` only; `wiki/knowledge/` does not move.
 - Never commit `.agents/` or `out/`.
 - Never put secret values in `galadon.yaml` or git.

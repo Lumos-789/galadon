@@ -12,7 +12,7 @@ class SixRingPolicy:
     _mapping = {
         "spec": ["spec"],
         "build": ["dev"],
-        "verify": ["test", "check"],
+        "verify": ["test", "fix", "check"],
         "ship": ["git"],
         "learn": ["spec", "check"],
         "done": ["agent"],
@@ -36,12 +36,8 @@ class OrchestratorPolicy:
         return list(self._mapping.get(phase, ["orchestrator"]))
 
 
-_POLICIES = {
+POLICIES = {
     "solo": SoloPolicy,
     "six-ring": SixRingPolicy,
     "orchestrator": OrchestratorPolicy,
 }
-
-
-def role_policy_for(name: str) -> SoloPolicy | SixRingPolicy | OrchestratorPolicy:
-    return _POLICIES[name]()

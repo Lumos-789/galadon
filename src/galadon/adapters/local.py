@@ -10,11 +10,13 @@ from typing import Any, Callable
 from ..config import render_probe_expect
 from ..ports import Artifact, DeployContext, ProbeResult, Release
 from ..util import digest_path, git_commit, now_iso, run_shell
-from .probe import READY_SECONDS, ProbeNotReady, extract_commit, fetch
+from .probe import ProbeNotReady, extract_commit, fetch, readiness, require_probe_url
 from .release import (
     DeployError,
     ReleaseLayout,
     deploy_lock,
+    keep_releases,
+    prune_releases,
     release_name,
     release_version,
     retain_previous,
@@ -33,7 +35,7 @@ class LocalCommandAdapter:
         clock: Clock | None = None,
         commit_provider: CommitProvider | None = None,
         sleep: Callable[[float], None] | None = None,
-        probe_ready: float = READY_SECONDS,
+        probe_ready: float | None = None,
     ) -> None:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._commit_provider = commit_provider or git_commit
@@ -42,6 +44,17 @@ class LocalCommandAdapter:
 
     def describe(self, ctx: DeployContext) -> str:
         return f"local workspace {ctx.root}"
+
+    def preflight(self, ctx: DeployContext) -> dict[str, Any]:
+        # Checked before anything is built or switched: a missing probe used to
+        # be discovered with the new release already live.
+        url = require_probe_url(ctx.config.deploy.probe_url)
+        if not ctx.config.deploy.probe_expect.strip():
+            raise DeployError(
+                "deploy.probe_expect is required for the local adapter; "
+                "a bare HTTP 200 is not a version probe"
+            )
+        return {"target": self.describe(ctx), "probe": url, "notes": []}
 
     def bootstrap(self, ctx: DeployContext) -> dict[str, Any]:
         raise DeployError("local adapter has no bootstrap step; there is nothing to provision")
@@ -92,7 +105,7 @@ class LocalCommandAdapter:
         return ReleaseLayout(root.resolve())
 
     def _commit(self, ctx: DeployContext) -> str:
-        return (ctx.commit or self._commit_provider(ctx.root) or "").strip()
+        return (ctx.commit if ctx.commit is not None else self._commit_provider(ctx.root) or "").strip()
 
     def release(self, ctx: DeployContext, artifact: Artifact) -> Release:
         layout = self._layout(ctx)
@@ -105,6 +118,7 @@ class LocalCommandAdapter:
         commit = self._commit(ctx)
         version = commit or artifact.digest[:12]
         target = layout.release_dir(release_name(self._clock(), version))
+        pruned: list[str] = []
         with deploy_lock(layout):
             self._run(ctx.config.deploy.release, ctx, "release")
             try:
@@ -121,6 +135,9 @@ class LocalCommandAdapter:
             except OSError as exc:
                 shutil.rmtree(target, ignore_errors=True)
                 raise DeployError(f"cannot publish release {target}: {exc}") from exc
+            pruned = prune_releases(
+                layout, keep_releases(ctx.config.deploy.options), [target, previous]
+            )
         return Release(
             env=ctx.env,
             artifact=artifact,
@@ -131,6 +148,7 @@ class LocalCommandAdapter:
                 "commit": commit or None,
                 "release_dir": str(target),
                 "previous": str(previous or ""),
+                "pruned": pruned,
             },
         )
 
@@ -141,14 +159,10 @@ class LocalCommandAdapter:
         *,
         check_expect: bool,
     ) -> ProbeResult:
-        url = ctx.config.deploy.probe_url.strip()
-        if not url:
-            raise DeployError(
-                "deploy.probe_url is required; Galadon refuses to report success without a probe"
-            )
+        url = require_probe_url(ctx.config.deploy.probe_url)
         try:
             status, body = fetch(
-                url, ready_seconds=self._probe_ready, sleep=self._sleep
+                url, ready_seconds=readiness(ctx, self._probe_ready), sleep=self._sleep
             )
         except ProbeNotReady as exc:
             return ProbeResult(ok=False, detail=str(exc), url=url)
@@ -223,6 +237,23 @@ class LocalCommandAdapter:
     def rollback(self, ctx: DeployContext, release: Release) -> None:
         layout = self._layout(ctx)
         with deploy_lock(layout):
+            if not layout.previous.is_symlink():
+                # No previous link means nothing was live before this release
+                # (`release` only skips the link when there was no `current`).
+                # The state to restore is "no release": leave the failed one
+                # in place as the record of what went wrong, but not live.
+                if layout.current.is_symlink():
+                    try:
+                        layout.current.unlink()
+                    except OSError as exc:
+                        raise DeployError(f"cannot remove the failed first release link {layout.current}: {exc}") from exc
+                release.metadata["rollback"] = {
+                    "version": None,
+                    "target": None,
+                    "ok": True,
+                    "first_release": True,
+                }
+                return
             target = layout.previous_release()
             version = release_version(target)
             switch_current(layout, target, suffix="rollback")

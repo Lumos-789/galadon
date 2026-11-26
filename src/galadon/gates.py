@@ -5,7 +5,7 @@ from typing import Any
 
 from .config import ProjectConfig
 from .layouts import MISSING_CHECKS, layout_contract_problems
-from .loop import CHECKS_PATH, retro_ok, spec_ok
+from .loop import CHECKS_PATH, retro_ok, spec_ok, verification_binding
 from .util import now_iso, run_shell, write_json
 
 
@@ -14,12 +14,16 @@ def _tail(text: str, limit: int = 2000) -> str:
     return text[-limit:] if len(text) > limit else text
 
 
-def _write_evidence(root: Path, config: ProjectConfig, report: dict[str, Any]) -> None:
+def _write_evidence(
+    root: Path, config: ProjectConfig, report: dict[str, Any]
+) -> None:
+    binding = report.get("binding") or {}
     lines = [
         "# Verification evidence",
         "",
         f"- at: {report['at']}",
         f"- ok: {report['ok']}",
+        f"- commit: {binding.get('head') or '(project is not tracked by git)'}",
         "",
     ]
     for item in report["results"]:
@@ -114,11 +118,14 @@ def run_checks(root: Path, config: ProjectConfig) -> dict[str, Any]:
                 if code != 0:
                     ok = False
 
+    # The binding is taken after the commands ran, so files a check writes into
+    # the tree are part of what "this tree passed" means.
     report = {
         "ok": ok,
         "at": now_iso(),
         "phase": "verify",
         "results": results,
+        "binding": verification_binding(root, config),
     }
     write_json(root / CHECKS_PATH, report)
     _write_evidence(root, config, report)

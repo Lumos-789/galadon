@@ -1,26 +1,33 @@
 from __future__ import annotations
 
 import json
-import re
-import shlex
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from ..config import render_probe_expect
 from ..ports import Artifact, DeployContext, ProbeResult, Release
 from ..util import digest_path, git_commit, now_iso
-from .probe import READY_SECONDS, ProbeNotReady, extract_commit, fetch
-from .release import (
-    ROOT_MARKER,
-    DeployError,
-    release_name,
-    release_version,
-    shell_lock,
-    shell_retain_previous,
-    shell_switch_current,
+from .probe import ProbeNotReady, extract_commit, fetch, readiness, require_probe_url
+from .release import DeployError, keep_releases, release_name, release_version
+from .ssh_scripts import (
+    SAFE_DOMAIN,
+    SAFE_HOST,
+    SAFE_LISTEN,
+    SAFE_MARKER,
+    SAFE_PATH,
+    SAFE_SERVICE,
+    SAFE_USER,
+    bootstrap_script,
+    caddy_block,
+    finalize_script,
+    prepare_script,
+    preflight_script,
+    rollback_script,
+    teardown_script,
+    unit_text,
 )
 
 Runner = Callable[..., tuple[int, str, str]]
@@ -37,13 +44,6 @@ _SSH_OPTIONS = (
     "-o",
     "ServerAliveCountMax=3",
 )
-_SAFE_HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:\[\]-]*$")
-_SAFE_USER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-_SAFE_SERVICE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")
-_SAFE_DOMAIN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
-_SAFE_LISTEN = re.compile(r"^[A-Za-z0-9_.:\[\]-]+$")
-_SAFE_MARKER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-_SAFE_PATH = re.compile(r"^[A-Za-z0-9._/-]+$")
 
 
 def subprocess_runner(
@@ -76,10 +76,6 @@ def subprocess_runner(
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def _q(value: Any) -> str:
-    return shlex.quote(str(value))
-
-
 def _parse_fields(stdout: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for line in stdout.splitlines():
@@ -87,6 +83,10 @@ def _parse_fields(stdout: str) -> dict[str, str]:
             key, value = line.split("=", 1)
             fields[key] = value
     return fields
+
+
+def remote_migrate(options: dict[str, Any]) -> str:
+    return str(options.get("remote_migrate") or "").strip()
 
 
 class SshSystemdAdapter:
@@ -98,7 +98,7 @@ class SshSystemdAdapter:
         clock: Clock | None = None,
         commit_provider: CommitProvider | None = None,
         sleep: Callable[[float], None] | None = None,
-        probe_ready: float = READY_SECONDS,
+        probe_ready: float | None = None,
     ) -> None:
         self._runner = runner or subprocess_runner
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -113,7 +113,7 @@ class SshSystemdAdapter:
     def _target(self, ctx: DeployContext) -> str:
         host = self._option(ctx, "host")
         user = self._option(ctx, "user")
-        if not _SAFE_HOST.fullmatch(host) or not _SAFE_USER.fullmatch(user):
+        if not SAFE_HOST.fullmatch(host) or not SAFE_USER.fullmatch(user):
             raise DeployError("deploy.options.host or user is missing or invalid")
         return f"{user}@{host}"
 
@@ -121,7 +121,7 @@ class SshSystemdAdapter:
         root = self._option(ctx, "remote_root").rstrip("/")
         if not root.startswith("/"):
             raise DeployError("deploy.options.remote_root must be an absolute path")
-        if not _SAFE_PATH.fullmatch(root):
+        if not SAFE_PATH.fullmatch(root):
             raise DeployError(
                 "deploy.options.remote_root may only contain letters, digits, "
                 "dot, underscore, hyphen and slash"
@@ -135,7 +135,7 @@ class SshSystemdAdapter:
 
     def _service(self, ctx: DeployContext) -> str:
         service = self._option(ctx, "service")
-        if not _SAFE_SERVICE.fullmatch(service):
+        if not SAFE_SERVICE.fullmatch(service):
             raise DeployError("deploy.options.service is missing or invalid")
         return service
 
@@ -195,6 +195,9 @@ class SshSystemdAdapter:
         return path
 
     def preflight(self, ctx: DeployContext) -> dict[str, Any]:
+        # The probe is checked before anything is built or touched: a missing
+        # or malformed probe URL used to be discovered with the release live.
+        probe = require_probe_url(ctx.config.deploy.probe_url)
         artifact = self._artifact_path(ctx)
         if not ctx.config.deploy.build.strip() and not artifact.exists():
             raise DeployError(
@@ -202,7 +205,6 @@ class SshSystemdAdapter:
             )
         root = self._root(ctx)
         service = self._service(ctx)
-        drift_check = ""
         notes: list[str] = []
         try:
             unit = self._unit_text(ctx)
@@ -213,37 +215,13 @@ class SshSystemdAdapter:
             notes.append(
                 f"skipping unit drift check: unit template incomplete ({reason})"
             )
-        if unit:
-            unit_path = f"/etc/systemd/system/{service}.service"
-            drift_check = (
-                "expected_unit=$(mktemp)\n"
-                "cat > \"$expected_unit\" <<'GALADON_UNIT'\n"
-                f"{unit}"
-                "GALADON_UNIT\n"
-                f'if ! cmp -s "$expected_unit" {_q(unit_path)}; then\n'
-                '  rm -f "$expected_unit"\n'
-                f'  echo "galadon: systemd unit drift detected: {unit_path}" >&2\n'
-                '  echo "galadon: run `galadon bootstrap --env <env>` to converge the unit" >&2\n'
-                "  exit 78\n"
-                "fi\n"
-                'rm -f "$expected_unit"\n'
-            )
-        script = f"""set -euo pipefail
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-root={_q(root)}
-service={_q(service)}
-test -d "$root" || {{ echo "galadon: remote_root is missing: $root" >&2; exit 66; }}
-test -w "$root" || {{ echo "galadon: remote_root is not writable: $root" >&2; exit 66; }}
-command -v systemctl >/dev/null 2>&1 || {{ echo "galadon: systemctl is unavailable" >&2; exit 69; }}
-command -v flock >/dev/null 2>&1 || {{ echo "galadon: flock is unavailable" >&2; exit 69; }}
-systemctl cat "$service" >/dev/null 2>&1 || {{ echo "galadon: systemd service is not installed: $service" >&2; exit 66; }}
-{drift_check}printf 'GALADON_OK=1\\n'
-"""
-        self._remote(ctx, script, "preflight")
+        unit_path = f"/etc/systemd/system/{service}.service"
+        self._remote(ctx, preflight_script(root, service, unit, unit_path), "preflight")
         return {
             "target": self._target(ctx),
             "remote_root": root,
             "service": service,
+            "probe": probe,
             "notes": notes,
         }
 
@@ -259,10 +237,12 @@ systemctl cat "$service" >/dev/null 2>&1 || {{ echo "galadon: systemd service is
         return Artifact(path=path, digest=digest)
 
     def migrate(self, ctx: DeployContext) -> None:
+        # This hook runs on the machine that ships. `options.remote_migrate` is
+        # the one that runs on the host, inside the new release.
         self._local_command(ctx, ctx.config.deploy.migrate, "migrate")
 
     def release(self, ctx: DeployContext, artifact: Artifact) -> Release:
-        commit = (ctx.commit or self._commit_provider(ctx.root) or "").strip()
+        commit = (ctx.commit if ctx.commit is not None else self._commit_provider(ctx.root) or "").strip()
         if not commit:
             raise DeployError("cannot determine the git commit for this build")
 
@@ -270,16 +250,10 @@ systemctl cat "$service" >/dev/null 2>&1 || {{ echo "galadon: systemd service is
         root = self._root(ctx)
         service = self._service(ctx)
         run_user = self._run_user(ctx)
+        options = ctx.config.deploy.options
         release_dir = f"{root}/releases/{release_name(self._clock(), commit)}"
 
-        prepare = f"""set -euo pipefail
-root={_q(root)}
-test -d "$root" || {{ echo "galadon: remote_root is missing: $root" >&2; exit 66; }}
-install -d -m 0755 {_q(root + "/releases")} {_q(root + "/shared")}
-test ! -e {_q(release_dir)} || {{ echo "galadon: release directory already exists: {release_dir}" >&2; exit 73; }}
-printf 'GALADON_OK=1\\n'
-"""
-        self._remote(ctx, prepare, "release prepare")
+        self._remote(ctx, prepare_script(root, release_dir), "release prepare")
 
         source = str(artifact.path) + ("/" if artifact.path.is_dir() else "")
         destination = f"{self._target(ctx)}:{release_dir}/"
@@ -296,31 +270,9 @@ printf 'GALADON_OK=1\\n'
             stage="release rsync",
         )
 
-        finalize = f"""set -euo pipefail
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-root={_q(root)}
-service={_q(service)}
-run_user={_q(run_user)}
-release={_q(release_dir)}
-{shell_lock()}test -d "$release" || {{ echo "galadon: release directory is missing: $release" >&2; exit 66; }}
-chown -R "$run_user:$run_user" "$release"
-{shell_retain_previous()}{shell_switch_current('"$release"', "new")}if ! systemctl restart "$service"; then
-  echo "galadon: service restart failed; restoring previous current" >&2
-  if [ -n "$old" ]; then
-    ln -sfn "$old" "$root/.current.restore"
-    mv -Tf "$root/.current.restore" "$root/current"
-    if ! systemctl restart "$service"; then
-      echo "galadon: previous release also failed to restart" >&2
-    fi
-  else
-    rm -f "$root/current"
-  fi
-  exit 1
-fi
-printf 'GALADON_PREVIOUS=%s\\n' "$old"
-printf 'GALADON_CURRENT=%s\\n' "$release"
-printf 'GALADON_OK=1\\n'
-"""
+        finalize = finalize_script(
+            root, service, run_user, release_dir, remote_migrate(options), keep_releases(options)
+        )
         fields = self._remote(ctx, finalize, "release finalize")
         return Release(
             env=ctx.env,
@@ -331,6 +283,7 @@ printf 'GALADON_OK=1\\n'
                 "commit": commit,
                 "release_dir": release_dir,
                 "previous": fields.get("GALADON_PREVIOUS", ""),
+                "pruned": fields.get("GALADON_PRUNED", "").split(),
             },
         )
 
@@ -341,14 +294,10 @@ printf 'GALADON_OK=1\\n'
         *,
         check_expect: bool = True,
     ) -> ProbeResult:
-        url = ctx.config.deploy.probe_url.strip()
-        if not url:
-            raise DeployError(
-                "deploy.probe_url is required; Galadon refuses to report success without a probe"
-            )
+        url = require_probe_url(ctx.config.deploy.probe_url)
         try:
             status, body = fetch(
-                url, ready_seconds=self._probe_ready, sleep=self._sleep
+                url, ready_seconds=readiness(ctx, self._probe_ready), sleep=self._sleep
             )
         except ProbeNotReady as exc:
             raise DeployError(f"probe request failed: {exc}") from exc.last
@@ -387,22 +336,18 @@ printf 'GALADON_OK=1\\n'
     def rollback(self, ctx: DeployContext, release: Release) -> None:
         root = self._root(ctx)
         service = self._service(ctx)
-        script = f"""set -euo pipefail
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-root={_q(root)}
-service={_q(service)}
-{shell_lock()}test -L "$root/previous" || {{ echo "galadon: no previous release link" >&2; exit 66; }}
-target=$(readlink -f "$root/previous")
-test -d "$target" || {{ echo "galadon: previous release is missing: $target" >&2; exit 66; }}
-case "$target" in
-  "$root/releases/"*) ;;
-  *) echo "galadon: previous link does not point into $root/releases: $target" >&2; exit 65 ;;
-esac
-{shell_switch_current('"$target"', "rollback")}systemctl restart "$service"
-printf 'GALADON_ROLLBACK_TO=%s\\n' "$target"
-printf 'GALADON_OK=1\\n'
-"""
-        fields = self._remote(ctx, script, "rollback")
+        fields = self._remote(ctx, rollback_script(root, service), "rollback")
+        if fields.get("GALADON_FIRST_RELEASE") == "1":
+            # Nothing was live before this release. The host is back to that
+            # state: no `current`, service stopped. There is nothing to re-probe.
+            release.metadata["rollback"] = {
+                "version": None,
+                "target": None,
+                "ok": True,
+                "first_release": True,
+                "service_stopped": True,
+            }
+            return
         target = (
             fields.get("GALADON_ROLLBACK_TO") or str(release.metadata.get("previous", ""))
         ).rstrip("/")
@@ -427,7 +372,7 @@ printf 'GALADON_OK=1\\n'
 
     def _run_user(self, ctx: DeployContext) -> str:
         user = self._option(ctx, "run_user") or "galadon"
-        if not _SAFE_USER.fullmatch(user):
+        if not SAFE_USER.fullmatch(user):
             raise DeployError("deploy.options.run_user is invalid")
         return user
 
@@ -460,208 +405,39 @@ printf 'GALADON_OK=1\\n'
                 "bootstrap requires deploy.options domain, listen, exec_start, caddy_block; "
                 f"missing: {', '.join(missing)}"
             )
-        if not _SAFE_DOMAIN.fullmatch(values["domain"]):
+        if not SAFE_DOMAIN.fullmatch(values["domain"]):
             raise DeployError("deploy.options.domain is invalid")
-        if not _SAFE_LISTEN.fullmatch(values["listen"]):
+        if not SAFE_LISTEN.fullmatch(values["listen"]):
             raise DeployError("deploy.options.listen is invalid")
-        if not _SAFE_MARKER.fullmatch(values["caddy_block"]):
+        if not SAFE_MARKER.fullmatch(values["caddy_block"]):
             raise DeployError("deploy.options.caddy_block is invalid")
         if "\n" in values["exec_start"] or "\r" in values["exec_start"]:
             raise DeployError("deploy.options.exec_start must be a single line")
         return values["domain"], values["listen"], values["exec_start"]
 
     def _unit_text(self, ctx: DeployContext) -> str:
-        root = self._root(ctx)
-        service = self._service(ctx)
-        run_user = self._run_user(ctx)
-        exec_start = self._bootstrap_values(ctx)[2]
-        return f"""[Unit]
-Description=Galadon service {service}
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User={run_user}
-Group={run_user}
-WorkingDirectory={root}/current
-ExecStart={exec_start}
-Restart=on-failure
-RestartSec=3
-NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
-"""
+        return unit_text(
+            self._service(ctx),
+            self._run_user(ctx),
+            self._root(ctx),
+            self._bootstrap_values(ctx)[2],
+            self._option(ctx, "environment_file"),
+        )
 
     def bootstrap(self, ctx: DeployContext) -> dict[str, Any]:
         root = self._root(ctx)
         service = self._service(ctx)
         run_user = self._run_user(ctx)
-        domain, listen, exec_start = self._bootstrap_values(ctx)
+        domain, listen, _ = self._bootstrap_values(ctx)
         marker = self._option(ctx, "caddy_block")
         unit_path = f"/etc/systemd/system/{service}.service"
-        unit = self._unit_text(ctx)
-        block = (
-            f"# galadon:begin {marker}\n"
-            f"{domain} {{\n"
-            "    import access_log\n"
-            '    header X-Robots-Tag "noindex, nofollow"\n'
-            "    respond /robots.txt `User-agent: *\n"
-            "Disallow: /` 200\n"
-            f"    reverse_proxy {listen}\n"
-            "}\n"
-            f"# galadon:end {marker}\n"
+        block = caddy_block(
+            domain, listen, marker, bool(ctx.config.deploy.options.get("search_index", False))
         )
-        script = f"""set -euo pipefail
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-root={_q(root)}
-service={_q(service)}
-run_user={_q(run_user)}
-domain={_q(domain)}
-listen={_q(listen)}
-marker={_q(marker)}
-unit_path={_q(unit_path)}
-
-marker_file="$root/{ROOT_MARKER}"
-if [ -d "$root" ]; then
-  if [ -f "$marker_file" ]; then
-    existing=$(cat "$marker_file")
-    if [ "$existing" != "$marker" ]; then
-      echo "galadon: refusing to bootstrap $root: it belongs to marker $existing" >&2
-      exit 65
-    fi
-  elif [ -n "$(ls -A "$root" 2>/dev/null)" ]; then
-    echo "galadon: refusing to bootstrap $root: directory is not empty and carries no {ROOT_MARKER}" >&2
-    exit 65
-  fi
-fi
-
-manage_user={1 if self._manage_user(ctx) else 0}
-user_created=0
-if [ "$manage_user" -eq 1 ]; then
-  if ! getent group "$run_user" >/dev/null 2>&1; then
-    groupadd --system "$run_user"
-  fi
-  if id -u "$run_user" >/dev/null 2>&1; then
-    user_created=0
-  else
-    useradd --system --gid "$run_user" --no-create-home --shell /usr/sbin/nologin "$run_user"
-    user_created=1
-  fi
-else
-  id -u "$run_user" >/dev/null 2>&1 || {{
-    echo "galadon: manage_user is false but $run_user does not exist" >&2
-    exit 66
-  }}
-fi
-install -d -m 0755 "$root"
-install -d -m 0755 -o "$run_user" -g "$run_user" "$root/releases" "$root/shared"
-printf '%s\\n' "$marker" > "$root/{ROOT_MARKER}"
-chmod 0644 "$root/{ROOT_MARKER}"
-
-unit_tmp=$(mktemp)
-cat > "$unit_tmp" <<'GALADON_UNIT'
-{unit}GALADON_UNIT
-if [ -f "$unit_path" ] && cmp -s "$unit_tmp" "$unit_path"; then
-  unit_changed=0
-else
-  install -m 0644 "$unit_tmp" "$unit_path"
-  unit_changed=1
-fi
-rm -f "$unit_tmp"
-if [ "$unit_changed" -eq 1 ]; then
-  systemctl daemon-reload
-fi
-systemctl enable "$service" >/dev/null
-if [ -L "$root/current" ]; then
-  if [ "$unit_changed" -eq 1 ]; then
-    systemctl restart "$service"
-  else
-    systemctl start "$service"
-  fi
-fi
-
-caddyfile=/etc/caddy/Caddyfile
-block_file=$(mktemp)
-cat > "$block_file" <<'GALADON_CADDY_BLOCK'
-{block}GALADON_CADDY_BLOCK
-begin="# galadon:begin $marker"
-end="# galadon:end $marker"
-new_file=$(mktemp)
-has_begin=0
-has_end=0
-if [ -f "$caddyfile" ]; then
-  if grep -Fqx "$begin" "$caddyfile"; then has_begin=1; fi
-  if grep -Fqx "$end" "$caddyfile"; then has_end=1; fi
-fi
-if [ "$has_begin" -ne "$has_end" ]; then
-  echo "galadon: incomplete Caddy marker block for $marker" >&2
-  exit 65
-fi
-if [ -f "$caddyfile" ] && [ "$has_begin" -eq 1 ]; then
-  awk -v begin="$begin" -v end="$end" -v blockfile="$block_file" '
-    BEGIN {{ while ((getline line < blockfile) > 0) block = block line "\\n" }}
-    $0 == begin {{ printf "%s", block; skip=1; next }}
-    skip == 1 && $0 == end {{ skip=0; next }}
-    skip == 1 {{ next }}
-    {{ print }}
-  ' "$caddyfile" > "$new_file"
-elif [ -f "$caddyfile" ]; then
-  cp "$caddyfile" "$new_file"
-  printf '\\n' >> "$new_file"
-  cat "$block_file" >> "$new_file"
-else
-  : > "$new_file"
-  cat "$block_file" >> "$new_file"
-fi
-
-backup=""
-caddy_changed=0
-if [ -f "$caddyfile" ] && cmp -s "$new_file" "$caddyfile"; then
-  caddy_changed=0
-else
-  if [ -f "$caddyfile" ]; then
-    backup="$caddyfile.galadon-bak.$(date -u +%Y%m%dT%H%M%SZ).$$"
-    cp -p "$caddyfile" "$backup"
-  fi
-  if [ -f "$caddyfile" ]; then
-    cat "$new_file" > "$caddyfile"
-  else
-    install -m 0644 "$new_file" "$caddyfile"
-  fi
-  if ! caddy validate --config "$caddyfile" --adapter caddyfile; then
-    if [ -n "$backup" ]; then
-      cp -p "$backup" "$caddyfile"
-    else
-      rm -f "$caddyfile"
-    fi
-    rm -f "$block_file" "$new_file"
-    echo "galadon: caddy validate failed; previous config restored and caddy was not reloaded" >&2
-    exit 1
-  fi
-  if ! systemctl reload caddy; then
-    if [ -n "$backup" ]; then
-      cp -p "$backup" "$caddyfile"
-      if ! systemctl reload caddy; then
-        echo "galadon: previous Caddyfile restored but caddy reload still failed" >&2
-      fi
-    else
-      rm -f "$caddyfile"
-    fi
-    rm -f "$block_file" "$new_file"
-    exit 1
-  fi
-  caddy_changed=1
-fi
-rm -f "$block_file" "$new_file"
-
-printf 'GALADON_USER_CREATED=%s\\n' "$user_created"
-printf 'GALADON_UNIT_CHANGED=%s\\n' "$unit_changed"
-printf 'GALADON_CADDY_CHANGED=%s\\n' "$caddy_changed"
-printf 'GALADON_CADDY_BACKUP=%s\\n' "$backup"
-printf 'GALADON_OK=1\\n'
-"""
+        script = bootstrap_script(
+            root, service, run_user, domain, listen, marker, unit_path,
+            self._unit_text(ctx), block, self._manage_user(ctx),
+        )
         fields = self._remote(ctx, script, "bootstrap")
         return {
             "target": self._target(ctx),
@@ -684,100 +460,11 @@ printf 'GALADON_OK=1\\n'
         run_user = self._run_user(ctx)
         manage_user = self._manage_user(ctx)
         marker = self._option(ctx, "caddy_block")
-        if not marker or not _SAFE_MARKER.fullmatch(marker):
+        if not marker or not SAFE_MARKER.fullmatch(marker):
             raise DeployError("teardown requires a valid deploy.options.caddy_block")
-        unit_path = f"/etc/systemd/system/{service}.service"
-        script = f"""set -euo pipefail
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-root={_q(root)}
-service={_q(service)}
-marker={_q(marker)}
-unit_path={_q(unit_path)}
-run_user={_q(run_user)}
-manage_user={1 if manage_user else 0}
-
-marker_file="$root/{ROOT_MARKER}"
-if [ ! -f "$marker_file" ]; then
-  echo "galadon: refusing to remove $root: $marker_file is missing" >&2
-  exit 65
-fi
-if [ "$(cat "$marker_file")" != "$marker" ]; then
-  echo "galadon: refusing to remove $root: marker file does not match $marker" >&2
-  exit 65
-fi
-
-service_removed=0
-if [ -f "$unit_path" ]; then
-  systemctl disable --now "$service"
-  rm -f "$unit_path"
-  systemctl daemon-reload
-  service_removed=1
-fi
-
-caddyfile=/etc/caddy/Caddyfile
-begin="# galadon:begin $marker"
-end="# galadon:end $marker"
-backup=""
-caddy_changed=0
-has_begin=0
-has_end=0
-if [ -f "$caddyfile" ]; then
-  if grep -Fqx "$begin" "$caddyfile"; then has_begin=1; fi
-  if grep -Fqx "$end" "$caddyfile"; then has_end=1; fi
-fi
-if [ "$has_begin" -ne "$has_end" ]; then
-  echo "galadon: incomplete Caddy marker block for $marker" >&2
-  exit 65
-fi
-if [ "$has_begin" -eq 1 ]; then
-  new_file=$(mktemp)
-  awk -v begin="$begin" -v end="$end" '
-    $0 == begin {{ skip=1; next }}
-    skip == 1 && $0 == end {{ skip=0; next }}
-    skip == 1 {{ next }}
-    {{ print }}
-  ' "$caddyfile" > "$new_file"
-  backup="$caddyfile.galadon-bak.$(date -u +%Y%m%dT%H%M%SZ).$$"
-  cp -p "$caddyfile" "$backup"
-  cat "$new_file" > "$caddyfile"
-  rm -f "$new_file"
-  if ! caddy validate --config "$caddyfile" --adapter caddyfile; then
-    cp -p "$backup" "$caddyfile"
-    echo "galadon: caddy validate failed; previous config restored and caddy was not reloaded" >&2
-    exit 1
-  fi
-  if ! systemctl reload caddy; then
-    cp -p "$backup" "$caddyfile"
-    if ! systemctl reload caddy; then
-      echo "galadon: previous Caddyfile restored but caddy reload still failed" >&2
-    fi
-    exit 1
-  fi
-  caddy_changed=1
-fi
-
-rm -rf "$root"
-user_removed=0
-user_skipped=""
-if [ "$manage_user" -eq 1 ] && id -u "$run_user" >/dev/null 2>&1; then
-  if userdel "$run_user" 2>/dev/null; then
-    user_removed=1
-  elif pgrep -u "$run_user" >/dev/null 2>&1; then
-    user_skipped="still in use by another service"
-    echo "galadon: left $run_user in place: still in use by another service" >&2
-  else
-    echo "galadon: could not remove system user $run_user" >&2
-    exit 1
-  fi
-fi
-printf 'GALADON_SERVICE_REMOVED=%s\\n' "$service_removed"
-printf 'GALADON_CADDY_CHANGED=%s\\n' "$caddy_changed"
-printf 'GALADON_CADDY_BACKUP=%s\\n' "$backup"
-printf 'GALADON_ROOT_REMOVED=1\\n'
-printf 'GALADON_USER_REMOVED=%s\\n' "$user_removed"
-printf 'GALADON_USER_SKIPPED=%s\\n' "$user_skipped"
-printf 'GALADON_OK=1\\n'
-"""
+        script = teardown_script(
+            root, service, marker, f"/etc/systemd/system/{service}.service", run_user, manage_user
+        )
         fields = self._remote(ctx, script, "teardown")
         return {
             "target": self._target(ctx),

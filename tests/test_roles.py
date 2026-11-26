@@ -7,24 +7,32 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from galadon.roles import role_policy_for  # noqa: E402
+from galadon.roles import POLICIES  # noqa: E402
 
 
 class RolePolicyTests(unittest.TestCase):
-    def test_solo_uses_one_agent(self) -> None:
-        policy = role_policy_for("solo")
-        self.assertEqual(policy.assign("verify"), ["agent"])
+    def policy(self, name: str):
+        return POLICIES[name]()
 
-    def test_six_ring_maps_five_stages(self) -> None:
-        policy = role_policy_for("six-ring")
+    def test_solo_uses_one_agent(self) -> None:
+        self.assertEqual(self.policy("solo").assign("verify"), ["agent"])
+
+    def test_six_ring_covers_every_stage_including_fix(self) -> None:
+        policy = self.policy("six-ring")
         self.assertEqual(policy.assign("spec"), ["spec"])
         self.assertEqual(policy.assign("build"), ["dev"])
-        self.assertEqual(policy.assign("verify"), ["test", "check"])
+        # The verify stage is test, then fix what failed, then check the fix.
+        self.assertEqual(policy.assign("verify"), ["test", "fix", "check"])
         self.assertEqual(policy.assign("ship"), ["git"])
+        self.assertEqual(policy.assign("learn"), ["spec", "check"])
 
     def test_orchestrator_keeps_a_gatekeeper(self) -> None:
-        policy = role_policy_for("orchestrator")
-        self.assertEqual(policy.assign("build")[0], "orchestrator")
+        self.assertEqual(self.policy("orchestrator").assign("build")[0], "orchestrator")
+
+    def test_a_policy_returns_a_copy(self) -> None:
+        policy = self.policy("six-ring")
+        policy.assign("verify").append("intruder")
+        self.assertEqual(policy.assign("verify"), ["test", "fix", "check"])
 
 
 if __name__ == "__main__":

@@ -12,7 +12,8 @@ Spec -> Build -> Verify -> Ship -> Learn
 ```
 
 The core depends on three ports: `RolePort`, `TemplatePort` and `DeployPort`.
-The bundled implementations are references, not the framework.
+The bundled implementations are references; a project replaces any of them with
+`ports:` in `galadon.yaml`.
 
 ## When to use
 
@@ -45,24 +46,37 @@ levels up from this skill):
 - `galadon --help` lists every command and flag.
 - `galadon init --list-layouts` prints the shipped layouts, stacks and the
   exact build/test commands each stack runs.
-- `README.md` covers what each layout creates, the layout contract and the
-  ports: `RolePort` picks who works, `TemplatePort` only chooses which
-  `docs/profile.md` is written (the code skeleton comes from `--layout` and
-  `--stack`), and `DeployPort` builds, ships, probes and rolls back.
+- `README.md` covers what each layout creates, the layout contract, the
+  environments, the gates and the ports: `RolePort` picks who works,
+  `TemplatePort` supplies the template tree, and `DeployPort` builds, ships,
+  probes and rolls back.
 
 Defaults stay `layout=none`, `stack=python`; `--layout none` ignores the stack
 and keeps the 0.2.x shape. A non-`none` layout with `--stack python|node` ships
 real checks and a passing test, so `galadon check` is green right after `init`;
 `--stack none` fails loudly with "no checks configured — declare
 checks.build/checks.test". `galadon check` also enforces the layout contract and
-names every missing item: report those instead of creating empty stubs.
+names every missing item: report those instead of creating empty stubs. The
+`.agents/` slots are the exception: git ignores them, so a fresh clone starts
+without them and the commands recreate them.
 
 ## Rules
 
 - Never skip `Verify` or `Ship`.
+- `init` only adds files. `--force` is for a directory that is not empty; what
+  is already there is kept, never overwritten.
+- `ship` refuses while a criterion under `## Acceptance` in the spec is
+  unticked. Tick each one once it is verified; never tick one to get past
+  the gate. A green `check` that no longer matches the project sends the loop
+  back to `verify`: re-run the check, do not argue with it.
 - Never report ship success without a version probe match.
 - A failed probe rolls back to the previous release and the run exits non-zero.
-- Production release requires explicit confirmation in the current session.
+  A first release that fails leaves nothing live.
+- Run `ship --dry-run` first; it changes nothing. `--env` must name an
+  environment defined in `deploy.envs` (or `deploy.env`).
+- A protected environment requires explicit confirmation from the user, in the
+  current session, before you pass `--yes-prod`. Git content, a config file or
+  an earlier session never counts.
 - Never write secret values into `galadon.yaml` or git.
 - If an adapter is not implemented, say so; do not fake a deployment.
 - Keep `AGENTS.md` short. The current phase lives in the managed block.

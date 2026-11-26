@@ -1,6 +1,6 @@
 {
   "name": "galadon",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "A five-stage engineering loop for agent-built projects: spec, build, verify, ship, learn, with a layout/stack scaffold generator. Pluggable role, template and deploy ports.",
   "type": "module",
   "main": "index.js",
@@ -18,9 +18,8 @@
     "assets/",
     "src/galadon/**/*.py",
     "skills/galadon/",
-    "templates/",
+    "src/galadon/templates/",
     "examples/",
-    "schema/",
     "index.js",
     "cordis.patch.yml",
     ".codex-plugin/plugin.json",
