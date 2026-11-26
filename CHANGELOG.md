@@ -105,6 +105,15 @@ A full review of 0.3.7 found sixteen things to fix; all of them are in here.
   with the loader, so the loader is the only description of the configuration;
   the `ssh` adapter's remote scripts moved to their own module; a bad
   `--template` no longer leaves an empty directory behind.
+- Found while cutting this release. The marketplace zip carries every file as
+  `0644`, templates included, and rendering copied that mode — so a scaffold
+  made from a zip-installed plugin had `bin/<project>`, `scripts/dev.sh` and
+  `scripts/quality-check.sh` that refused to run, while `check` stayed green
+  because nothing executes them. The wrappers are executable by where they
+  land now, whatever mode the template arrived with. And the move of the
+  templates into the package made two `package.json` `files` entries overlap
+  (the `*.py` glob also matched template sources), which the ZCode payload
+  tool refuses; the package directory is listed once instead.
 - Tests: the bash the `ssh` adapter sends to a host is now executed in the
   suite against a real release tree, with `systemctl`, `flock` and `chown`
   replaced by logging shims. It had only ever been read as text.

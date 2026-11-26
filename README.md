@@ -35,8 +35,10 @@ zcode plugins install galadon@<marketplace>
 codex plugin add galadon@<marketplace>
 ```
 
-Inside a workspace the agent runs the bundled `bin/galadon`. To use the CLI
-yourself, either call `bin/galadon` from the plugin directory or install it:
+Inside a workspace the agent runs the bundled `bin/galadon`; a plugin
+installed from a zip does not carry the executable bit, so run it as
+`bash bin/galadon` there. To use the CLI yourself, either call `bin/galadon`
+from the plugin directory or install it:
 
 ```bash
 pip install <plugin-dir>   # or: pipx install <plugin-dir>

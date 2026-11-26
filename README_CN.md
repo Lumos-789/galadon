@@ -32,8 +32,9 @@ zcode plugins install galadon@<marketplace>
 codex plugin add galadon@<marketplace>
 ```
 
-工作区里 agent 直接用插件自带的 `bin/galadon`。自己想用 CLI 时，可以调
-插件目录下的 `bin/galadon`，或：
+工作区里 agent 直接用插件自带的 `bin/galadon`；以 zip 安装的插件不带可执行位，
+此时用 `bash bin/galadon` 运行。自己想用 CLI 时，可以调插件目录下的
+`bin/galadon`，或：
 
 ```bash
 pip install <插件目录>   # 或 pipx install <插件目录>

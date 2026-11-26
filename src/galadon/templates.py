@@ -31,6 +31,18 @@ class TemplateError(ValueError):
     pass
 
 
+def _file_mode(source: Path, relative: Path) -> int:
+    """The mode a rendered file gets. The wrappers a scaffold promises are
+    runnable (`bin/*`, `scripts/*.sh`) are executable wherever they came from:
+    a zip install delivers every template as a plain 0644 file, and copying
+    that mode made the scaffold's own entry points refuse to run."""
+    mode = source.stat().st_mode & 0o777
+    runnable = relative.parent == Path("bin") or (
+        relative.parent == Path("scripts") and relative.suffix == ".sh"
+    )
+    return mode | 0o111 if runnable else mode
+
+
 class FileTemplateProvider:
     """Renders `templates/`: base, then the profile, then the layout layers.
 
@@ -151,7 +163,7 @@ class FileTemplateProvider:
                     target.write_text(text, encoding="utf-8")
                 else:
                     shutil.copyfile(source, target)
-                target.chmod(source.stat().st_mode & 0o777)
+                target.chmod(_file_mode(source, relative))
                 written.append(str(relative))
                 written_targets.add(target)
         return {"written": sorted(set(written)), "skipped": sorted(set(skipped))}

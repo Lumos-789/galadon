@@ -16,9 +16,8 @@
   "files": [
     "bin/galadon",
     "assets/",
-    "src/galadon/**/*.py",
+    "src/galadon/",
     "skills/galadon/",
-    "src/galadon/templates/",
     "examples/",
     "index.js",
     "cordis.patch.yml",

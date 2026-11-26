@@ -33,7 +33,9 @@ The bundled implementations are references; a project replaces any of them with
 Resolve it in this order and stop at the first hit:
 
 1. `galadon` on `PATH`.
-2. `../../bin/galadon` relative to this skill directory (the plugin ships the CLI).
+2. `../../bin/galadon` relative to this skill directory (the plugin ships the
+   CLI). If it is not executable — a zip install drops the bit — run it as
+   `bash ../../bin/galadon`.
 3. `PYTHONPATH=<plugin>/src python3 -m galadon`.
 
 The CLI only needs Python 3.10+ and `PyYAML`.
